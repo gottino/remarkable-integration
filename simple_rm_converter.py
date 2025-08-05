@@ -23,22 +23,30 @@ except ImportError as e:
 # Optional PDF conversion
 INKSCAPE_AVAILABLE = False
 CAIROSVG_AVAILABLE = False
+RSVG_CONVERT_AVAILABLE = False
 
 try:
     import subprocess
     import shutil
-    # Check if we have Inkscape
+    
+    # Check for rsvg-convert (preferred - matches your original tool)
+    RSVG_CONVERT_AVAILABLE = shutil.which('rsvg-convert') is not None
+    if RSVG_CONVERT_AVAILABLE:
+        print("🔧 Found rsvg-convert for PDF conversion (matches your original rmtool.py)")
+    
+    # Check if we have Inkscape as backup
     INKSCAPE_AVAILABLE = shutil.which('inkscape') is not None
     if INKSCAPE_AVAILABLE:
-        print("🔧 Found Inkscape for PDF conversion")
+        print("🔧 Found Inkscape for PDF conversion (backup option)")
+        
 except ImportError:
     pass
 
-# Check for cairosvg more carefully
+# Check for cairosvg more carefully (but prefer rsvg-convert)
 try:
     import cairosvg
     CAIROSVG_AVAILABLE = True
-    print("🔧 Found cairosvg for PDF conversion")
+    print("🔧 Found cairosvg for PDF conversion (backup option)")
 except ImportError:
     pass
 except OSError as e:
@@ -87,7 +95,39 @@ def safe_filename(name):
     return safe_name.strip('_').strip()
 
 
-def svg_to_pdf_cairosvg(svg_content, pdf_path):
+def svg_to_pdf_rsvg_convert(svg_file, pdf_file):
+    """Convert SVG to PDF using rsvg-convert (matches original rmtool.py approach)."""
+    try:
+        # Get SVG dimensions to maintain aspect ratio
+        # For now, use standard reMarkable dimensions
+        width_mm = 157  # Standard reMarkable page width in mm
+        height_mm = 210  # Standard reMarkable page height in mm
+        
+        command = [
+            'rsvg-convert',
+            '--format=pdf',
+            f'--width={width_mm}mm',
+            f'--height={height_mm}mm',
+            str(svg_file)
+        ]
+        
+        result = subprocess.run(command, capture_output=True, timeout=30)
+        
+        if result.returncode == 0:
+            # Write the PDF output to file
+            with open(pdf_file, 'wb') as f:
+                f.write(result.stdout)
+            return True
+        else:
+            print(f"    ❌ rsvg-convert error: {result.stderr.decode()}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        print("    ❌ rsvg-convert conversion timed out")
+        return False
+    except Exception as e:
+        print(f"    ❌ rsvg-convert conversion failed: {e}")
+        return False
     """Convert SVG to PDF using cairosvg."""
     try:
         import cairosvg
@@ -151,12 +191,17 @@ def convert_rm_files(input_path, output_path, convert_to_pdf=True):
         print()
     
     if convert_to_pdf:
-        if CAIROSVG_AVAILABLE:
+        if RSVG_CONVERT_AVAILABLE:
+            print("🔧 PDF conversion: Using rsvg-convert (same as original rmtool.py)")
+        elif CAIROSVG_AVAILABLE:
             print("🔧 PDF conversion: Using cairosvg")
         elif INKSCAPE_AVAILABLE:
             print("🔧 PDF conversion: Using Inkscape")
         else:
-            print("⚠️  PDF conversion not available (install cairosvg or Inkscape)")
+            print("⚠️  PDF conversion not available")
+            print("    Install rsvg-convert with: brew install librsvg")
+            print("    Or install cairosvg with: poetry add cairosvg && brew install cairo")
+            print("    Or install Inkscape with: brew install inkscape")
             convert_to_pdf = False
     
     print("=" * 60)
@@ -203,17 +248,24 @@ def convert_rm_files(input_path, output_path, convert_to_pdf=True):
                 print(f"    ✅ SVG saved: {svg_file.name}")
                 stats['svg_success'] += 1
                 
-                # For PDF conversion, we need to read the SVG content
+                # For PDF conversion, try methods in order of preference
                 if convert_to_pdf:
-                    with open(svg_file, 'r', encoding='utf-8') as f:
-                        svg_content = f.read()
-                    
                     pdf_file = svg_file.with_suffix('.pdf')
                     
                     pdf_success = False
-                    if CAIROSVG_AVAILABLE:
+                    
+                    # Try rsvg-convert first (matches your original tool)
+                    if RSVG_CONVERT_AVAILABLE and not pdf_success:
+                        pdf_success = svg_to_pdf_rsvg_convert(svg_file, pdf_file)
+                    
+                    # Try cairosvg as backup
+                    if CAIROSVG_AVAILABLE and not pdf_success:
+                        with open(svg_file, 'r', encoding='utf-8') as f:
+                            svg_content = f.read()
                         pdf_success = svg_to_pdf_cairosvg(svg_content, pdf_file)
-                    elif INKSCAPE_AVAILABLE:
+                    
+                    # Try Inkscape as final backup
+                    if INKSCAPE_AVAILABLE and not pdf_success:
                         pdf_success = svg_to_pdf_inkscape(svg_file, pdf_file)
                     
                     if pdf_success:
@@ -257,7 +309,7 @@ def main():
         print()
         print("Arguments:")
         print("  input_path   : Path to directory containing .rm files")
-        print("  output_path  : Output directory (default: ./converted_files)")
+        print("  output_path  : Output directory (default: ./test_data/converted_files)")
         print("  --no-pdf     : Skip PDF conversion, only create SVG files")
         print()
         print("Examples:")
@@ -268,7 +320,7 @@ def main():
     
     # Parse arguments
     input_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith('--') else "./converted_files"
+    output_path = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith('--') else "./test_data/converted_files"
     convert_to_pdf = '--no-pdf' not in sys.argv
     
     # Verify input path exists
