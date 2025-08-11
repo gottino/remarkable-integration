@@ -1,0 +1,104 @@
+# Database configuration for reMarkable Pipeline
+# Save this as config/database.yaml
+
+database:
+  # Database file path (SQLite)
+  path: "data/remarkable_pipeline.db"
+  
+  # Connection settings
+  connection:
+    timeout: 30  # Connection timeout in seconds
+    check_same_thread: false  # Allow SQLite to be used across threads
+    
+  # Performance settings
+  performance:
+    journal_mode: "WAL"  # Write-Ahead Logging for better concurrent access
+    synchronous: "NORMAL"  # Balance between safety and speed
+    cache_size: 10000  # Number of pages to cache in memory
+    temp_store: "memory"  # Store temporary tables in memory
+    
+  # Backup settings
+  backup:
+    enabled: true
+    interval_hours: 24  # Auto-backup every 24 hours
+    keep_backups: 7  # Keep 7 days of backups
+    backup_directory: "data/backups"
+    
+  # Maintenance settings
+  maintenance:
+    auto_vacuum: "incremental"  # Gradually reclaim space
+    vacuum_threshold_mb: 100  # Run VACUUM when database grows by 100MB
+    analyze_interval_hours: 168  # Update statistics weekly (7 days)
+
+# Highlight extraction settings
+highlight_extraction:
+  min_text_length: 10
+  text_threshold: 0.6
+  min_words: 3
+  symbol_ratio_threshold: 0.2
+  unwanted_patterns:
+    - "reMarkable .lines file, version=6"
+    - "reMarkable .lines file, version=3"
+
+# Processing settings
+processing:
+  batch_size: 100  # Process files in batches
+  max_file_size_mb: 50  # Skip files larger than 50MB
+  
+  # Retry settings for failed processing
+  retry:
+    max_attempts: 3
+    backoff_seconds: [1, 5, 15]  # Wait times between retries
+
+# Event system settings  
+events:
+  max_history_size: 1000  # Keep 1000 events in memory
+  persist_events: true  # Store events in database
+  event_retention_days: 30  # Keep events for 30 days
+
+# Integration settings
+integrations:
+  readwise:
+    enabled: false
+    api_key: null
+    sync_highlights: true
+    
+  notion:
+    enabled: false
+    api_key: null
+    database_id: null
+    sync_highlights: true
+    sync_todos: false
+    
+  microsoft_todo:
+    enabled: false
+    client_id: null
+    sync_todos: true
+
+# File watching settings
+file_watcher:
+  # reMarkable sync directory (update this path)
+  sync_directory: null  # e.g., "/Users/username/Library/Mobile Documents/iCloud~ReMarkable/Documents"
+  
+  # File patterns to watch
+  patterns:
+    - "*.content"
+    - "*.rm"
+    - "*.metadata"
+    
+  # Ignore patterns
+  ignore_patterns:
+    - ".*"  # Hidden files
+    - "*.tmp"
+    - "*.temp"
+    
+  # Debounce settings (avoid processing files multiple times)
+  debounce_seconds: 2  # Wait 2 seconds after file changes stop
+
+# Logging settings
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "data/logs/pipeline.log"
+  max_file_size_mb: 10
+  backup_count: 5

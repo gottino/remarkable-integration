@@ -14,9 +14,10 @@ import os
 import sys
 import time
 import pandas as pd
+import json  # ADD MISSING IMPORT
 from pathlib import Path
 
-# Import your original functions
+# Import your original functions (should be in project root)
 try:
     from extract_text import (
         find_content_and_rm_files,
@@ -25,19 +26,35 @@ try:
         clean_extracted_text
     )
     ORIGINAL_MODULE_AVAILABLE = True
-except ImportError:
-    print("Warning: Original extract_text.py not found. Some features will be unavailable.")
+    print("✅ Original extract_text.py found and imported")
+except ImportError as e:
+    print(f"⚠️  Original extract_text.py not found: {e}")
+    print("   Make sure extract_text.py is in the project root directory")
     ORIGINAL_MODULE_AVAILABLE = False
 
-# Import new system (adjust path as needed)
+# Import new system 
 try:
-    sys.path.insert(0, str(Path(__file__).parent))
-    from src.processors.highlight_extractor import HighlightExtractor, process_directory
-    from src.core.database import DatabaseManager
+    # Add project root to path for imports
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+    
+    from src.processors.highlight_extractor import HighlightExtractor, process_directory, DatabaseManager
     NEW_SYSTEM_AVAILABLE = True
-except ImportError:
-    print("Warning: New highlight extractor system not found.")
+    print("✅ New highlight extraction system found and imported")
+except ImportError as e:
+    print(f"⚠️  New highlight extraction system not found: {e}")
+    print("   Make sure you've created src/processors/highlight_extractor.py")
     NEW_SYSTEM_AVAILABLE = False
+
+# Import enhanced system (optional)
+try:
+    from src.processors.enhanced_highlight_extractor import EnhancedHighlightExtractor, process_directory_enhanced
+    ENHANCED_SYSTEM_AVAILABLE = True
+    print("✅ Enhanced highlight extraction system found and imported")
+except ImportError as e:
+    print(f"ℹ️  Enhanced highlight extraction system not found: {e}")
+    print("   This is optional - enhanced features won't be available")
+    ENHANCED_SYSTEM_AVAILABLE = False
 
 
 class HighlightMigrationTool:
@@ -48,11 +65,184 @@ class HighlightMigrationTool:
         self.highlight_extractor = None
         
         if NEW_SYSTEM_AVAILABLE:
-            # Initialize new system
-            self.db_manager = DatabaseManager("migration_test.db")
+            # Initialize new system with proper database path
+            os.makedirs("data", exist_ok=True)  # Create data directory
+            self.db_manager = DatabaseManager("data/migration_test.db")
             self.highlight_extractor = HighlightExtractor(self.db_manager)
+            
+            # Initialize enhanced system if available
+            if ENHANCED_SYSTEM_AVAILABLE:
+                self.enhanced_extractor = EnhancedHighlightExtractor()
+                print("✅ Enhanced extraction available")
+            else:
+                self.enhanced_extractor = None
     
-    def compare_extraction_methods(self, directory: str) -> Dict:
+    def debug_new_method(self, directory: str) -> None:
+        """Run detailed debugging of the new method."""
+        print("🐛 Running detailed debug of new method...")
+        
+        if not NEW_SYSTEM_AVAILABLE:
+            print("❌ New system not available for debugging")
+            return
+        
+        # Import debug version
+        try:
+            project_root = Path(__file__).parent.parent
+            sys.path.insert(0, str(project_root))
+            
+            from debug_highlight_extractor import debug_comparison
+            debug_comparison(directory)
+            
+        except ImportError as e:
+            print(f"❌ Debug extractor not available: {e}")
+            print("   Create debug_highlight_extractor.py from the debug artifact")
+    
+    def compare_all_methods(self, directory: str) -> dict:
+        """Compare original, new, and enhanced extraction methods."""
+        print("🔬 Comparing ALL extraction methods (Original vs New vs Enhanced)...")
+        print("=" * 70)
+        
+        results = {
+            'original_method': {},
+            'new_method': {},
+            'enhanced_method': {},
+            'timing': {}
+        }
+        
+        # Test original method
+        if ORIGINAL_MODULE_AVAILABLE:
+            print("\n📊 Testing original method...")
+            start_time = time.time()
+            try:
+                content_to_rm_files = find_content_and_rm_files(directory)
+                old_highlights = []
+                
+                for content_file, rm_files in content_to_rm_files.items():
+                    result_df = process_rm_files(rm_files, content_file)
+                    if not result_df.empty:
+                        old_highlights.extend(result_df.to_dict('records'))
+                
+                results['original_method'] = {
+                    'highlight_count': len(old_highlights),
+                    'file_count': len(content_to_rm_files),
+                    'highlights': old_highlights
+                }
+                print(f"   ✅ Original: {len(old_highlights)} highlights")
+                
+            except Exception as e:
+                print(f"   ❌ Original method error: {e}")
+                results['original_method'] = {'error': str(e)}
+            
+            results['timing']['original_method'] = time.time() - start_time
+        
+        # Test new method
+        if NEW_SYSTEM_AVAILABLE:
+            print("\n📊 Testing new method...")
+            start_time = time.time()
+            try:
+                file_results = process_directory(directory, self.db_manager)
+                
+                # Get highlights from database
+                new_highlights = []
+                with self.db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT title, text, page_number, file_name, confidence, created_at FROM highlights ORDER BY created_at")
+                    rows = cursor.fetchall()
+                    
+                    for row in rows:
+                        highlight_dict = {
+                            'title': row[0], 'text': row[1], 'page_number': row[2],
+                            'file_name': row[3], 'confidence': row[4], 'created_at': row[5]
+                        }
+                        new_highlights.append(highlight_dict)
+                
+                results['new_method'] = {
+                    'highlight_count': len(new_highlights),
+                    'file_count': len(file_results),
+                    'highlights': new_highlights
+                }
+                print(f"   ✅ New: {len(new_highlights)} highlights")
+                
+            except Exception as e:
+                print(f"   ❌ New method error: {e}")
+                results['new_method'] = {'error': str(e)}
+            
+            results['timing']['new_method'] = time.time() - start_time
+        
+        # Test enhanced method
+        if ENHANCED_SYSTEM_AVAILABLE:
+            print("\n📊 Testing enhanced method...")
+            start_time = time.time()
+            try:
+                enhanced_db = DatabaseManager("data/enhanced_migration_test.db")
+                enhanced_results = process_directory_enhanced(directory, enhanced_db)
+                
+                # Get enhanced highlights from database
+                enhanced_highlights = []
+                with enhanced_db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT title, corrected_text, original_text, page_number, 
+                               match_score, passage_id, created_at 
+                        FROM enhanced_highlights ORDER BY created_at
+                    """)
+                    rows = cursor.fetchall()
+                    
+                    for row in rows:
+                        highlight_dict = {
+                            'title': row[0], 'corrected_text': row[1], 'original_text': row[2],
+                            'page_number': row[3], 'match_score': row[4], 'passage_id': row[5],
+                            'created_at': row[6]
+                        }
+                        enhanced_highlights.append(highlight_dict)
+                
+                results['enhanced_method'] = {
+                    'highlight_count': len(enhanced_highlights),
+                    'file_count': len(enhanced_results),
+                    'highlights': enhanced_highlights
+                }
+                print(f"   ✅ Enhanced: {len(enhanced_highlights)} passages")
+                
+            except Exception as e:
+                print(f"   ❌ Enhanced method error: {e}")
+                results['enhanced_method'] = {'error': str(e)}
+            
+            results['timing']['enhanced_method'] = time.time() - start_time
+        
+        # Show comparison
+        self._show_three_way_comparison(results)
+        
+        return results
+    
+    def _show_three_way_comparison(self, results: Dict):
+        """Show comparison between all three methods."""
+        print(f"\n📋 Three-Way Comparison Results:")
+        print("=" * 50)
+        
+        methods = ['original_method', 'new_method', 'enhanced_method']
+        method_names = ['Original', 'New', 'Enhanced']
+        
+        for method, name in zip(methods, method_names):
+            if method in results and 'error' not in results[method]:
+                count = results[method]['highlight_count']
+                time_taken = results['timing'].get(method, 0)
+                print(f"  {name}: {count} highlights/passages in {time_taken:.2f}s")
+            else:
+                print(f"  {name}: Not available or error")
+        
+        # Show sample enhanced highlights if available
+        if 'enhanced_method' in results and 'error' not in results['enhanced_method']:
+            enhanced_highlights = results['enhanced_method']['highlights']
+            if enhanced_highlights:
+                print(f"\n📝 Sample Enhanced Results (first 2):")
+                for i, highlight in enumerate(enhanced_highlights[:2], 1):
+                    original = highlight.get('original_text', '')[:60]
+                    corrected = highlight.get('corrected_text', '')[:60]
+                    score = highlight.get('match_score', 0)
+                    print(f"   {i}. Original: '{original}...'")
+                    print(f"      Enhanced: '{corrected}...'")
+                    print(f"      Match Score: {score:.2f}")
+                    print()
         """Compare old vs new extraction methods."""
         if not ORIGINAL_MODULE_AVAILABLE or not NEW_SYSTEM_AVAILABLE:
             print("Cannot compare - both systems must be available")
@@ -100,29 +290,25 @@ class HighlightMigrationTool:
         try:
             file_results = process_directory(directory, self.db_manager)
             
-            # Get all highlights from database
+            # Get all highlights from database DIRECTLY
             new_highlights = []
-            for file_path in file_results.keys():
-                content_id = os.path.splitext(os.path.basename(file_path))[0]
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT title, text, page_number, file_name, confidence, created_at FROM highlights ORDER BY created_at")
+                rows = cursor.fetchall()
                 
-                # Get document info to find title
-                try:
-                    with open(file_path, 'r') as f:
-                        content_data = json.load(f)
-                    
-                    # Get title from metadata
-                    metadata_file = os.path.join(os.path.dirname(file_path), f"{content_id}.metadata")
-                    title = "Unknown Title"
-                    if os.path.exists(metadata_file):
-                        with open(metadata_file, 'r') as f:
-                            metadata = json.load(f)
-                            title = metadata.get('visibleName', title)
-                    
-                    doc_highlights = self.highlight_extractor.get_highlights_for_document(title)
-                    new_highlights.extend(doc_highlights)
-                    
-                except Exception as e:
-                    print(f"Warning: Could not get highlights for {file_path}: {e}")
+                for row in rows:
+                    highlight_dict = {
+                        'title': row[0],
+                        'text': row[1], 
+                        'page_number': row[2],
+                        'file_name': row[3],
+                        'confidence': row[4],
+                        'created_at': row[5]
+                    }
+                    new_highlights.append(highlight_dict)
+            
+            print(f"📊 Direct database query found {len(new_highlights)} highlights")
             
             results['new_method'] = {
                 'highlight_count': len(new_highlights),
@@ -132,6 +318,8 @@ class HighlightMigrationTool:
             
         except Exception as e:
             print(f"❌ Error in new method: {e}")
+            import traceback
+            traceback.print_exc()
             results['new_method'] = {'error': str(e)}
         
         new_time = time.time() - start_time
@@ -350,6 +538,18 @@ def main():
         help="Create CSV in original format for backward compatibility"
     )
     
+    parser.add_argument(
+        "--debug-new",
+        action="store_true",
+        help="Run detailed debugging of the new method"
+    )
+    
+    parser.add_argument(
+        "--compare-all",
+        action="store_true", 
+        help="Compare original vs new vs enhanced methods (if available)"
+    )
+    
     args = parser.parse_args()
     
     if not os.path.exists(args.directory):
@@ -370,6 +570,12 @@ def main():
     
     elif args.original_only:
         migration_tool._run_original_method(args.directory)
+    
+    elif args.compare_all:
+        migration_tool.compare_all_methods(args.directory)
+    
+    elif args.debug_new:
+        migration_tool.debug_new_method(args.directory)
     
     elif args.compatibility:
         output_csv = args.output_csv or "highlights_compatibility.csv"
