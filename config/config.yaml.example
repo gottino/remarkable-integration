@@ -1,0 +1,108 @@
+# reMarkable Integration Configuration
+
+# reMarkable tablet settings
+remarkable:
+  # Path to reMarkable sync directory (required)
+  # This is where your reMarkable device syncs files
+  sync_directory: null  # e.g., "/Users/username/reMarkable" or "/home/user/reMarkable"
+  
+  # Path to backup directory (optional)
+  # If set, files will be backed up here before processing
+  backup_directory: null
+
+# Database settings
+database:
+  # Path to SQLite database file
+  path: "remarkable_pipeline.db"
+  
+  # Enable automatic backups
+  backup_enabled: true
+  
+  # Backup interval in hours
+  backup_interval_hours: 24
+
+# Processing settings
+processing:
+  # Highlight extraction settings
+  highlight_extraction:
+    enabled: true
+    # Minimum length for ASCII text sequences
+    min_text_length: 8
+    # Minimum ratio of alphabetic characters (0.0-1.0)
+    text_threshold: 0.4
+    # Minimum number of words in extracted text
+    min_words: 2
+    # Maximum ratio of symbols to characters (0.0-1.0)
+    symbol_ratio_threshold: 0.3
+  
+  # OCR settings (for handwritten text recognition)
+  ocr:
+    enabled: false
+    language: "en"
+    confidence_threshold: 0.7
+  
+  # File watching settings
+  file_watching:
+    enabled: true
+    watch_patterns:
+      - "*.content"
+      - "*.rm"
+    ignore_patterns:
+      - ".*"
+      - "*.tmp"
+
+# Third-party integrations
+integrations:
+  # Notion integration
+  notion:
+    enabled: false
+    # Get your API token from https://developers.notion.com/
+    api_token: null
+    # Database ID where highlights will be synced
+    database_id: null
+  
+  # Readwise integration  
+  readwise:
+    enabled: false
+    # Get your API token from https://readwise.io/access_token
+    api_token: null
+  
+  # Microsoft To Do integration
+  microsoft_todo:
+    enabled: false
+    # Azure app registration credentials
+    client_id: null
+    client_secret: null
+
+# Logging settings
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # Log message format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Log file path (null for console only)
+  file: null  # e.g., "remarkable_integration.log"
+
+# Example configurations for different setups:
+#
+# Basic setup:
+# remarkable:
+#   sync_directory: "/Users/yourname/reMarkable"
+# 
+# Advanced setup with integrations:
+# remarkable:
+#   sync_directory: "/Users/yourname/reMarkable"
+#   backup_directory: "/Users/yourname/reMarkable/backups"
+# integrations:
+#   readwise:
+#     enabled: true
+#     api_token: "your_readwise_token_here"
+#   notion:
+#     enabled: true  
+#     api_token: "your_notion_token_here"
+#     database_id: "your_notion_database_id"
+# logging:
+#   level: "DEBUG"
+#   file: "remarkable_integration.log"
