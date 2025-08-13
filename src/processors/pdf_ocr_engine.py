@@ -1,23 +1,21 @@
 """
-OCR Engine for reMarkable Integration.
+PDF OCR Engine for reMarkable Integration.
 
-Handles optical character recognition of handwritten text from reMarkable tablet files.
-Converts SVG strokes to images and uses EasyOCR for text recognition.
+Handles optical character recognition of PDF files generated from reMarkable notebooks.
+Uses EasyOCR for text recognition and pdf2image for PDF to image conversion.
 """
 
 import os
-import io
 import logging
-import tempfile
 import sqlite3
-from typing import List, Dict, Optional, Tuple, Any, Union
+from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from pathlib import Path
 import json
 
 # Core dependencies
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 
 # OCR engine
 try:
@@ -26,17 +24,14 @@ try:
 except ImportError:
     EASYOCR_AVAILABLE = False
 
-# SVG processing
+# PDF processing
 try:
-    import cairosvg
-    CAIROSVG_AVAILABLE = True
-except (ImportError, OSError) as e:
-    CAIROSVG_AVAILABLE = False
-    _cairosvg_error = str(e)
+    from pdf2image import convert_from_path
+    PDF2IMAGE_AVAILABLE = True
+except ImportError:
+    PDF2IMAGE_AVAILABLE = False
 
-# reMarkable processing
-from ..core.rm_parser import RemarkableParser
-from ..core.rm2svg import RmToSvgConverter
+# Database and events
 from ..core.events import get_event_bus, EventType
 from ..core.database import DatabaseManager
 
@@ -67,7 +62,7 @@ class OCRResult:
     confidence: float
     bounding_box: BoundingBox
     language: str
-    page_number: Optional[str] = None
+    page_number: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -81,7 +76,7 @@ class OCRResult:
 
 @dataclass
 class ProcessingResult:
-    """Result of OCR processing on a file."""
+    """Result of OCR processing on a PDF file."""
     success: bool
     file_path: str
     processor_type: str
@@ -100,8 +95,8 @@ class ProcessingResult:
         }
 
 
-class OCREngine:
-    """OCR engine for processing reMarkable handwritten content."""
+class PDFOCREngine:
+    """OCR engine for processing PDF files generated from reMarkable notebooks."""
     
     def __init__(
         self, 
@@ -111,7 +106,7 @@ class OCREngine:
         enable_gpu: bool = False
     ):
         """
-        Initialize OCR engine.
+        Initialize PDF OCR engine.
         
         Args:
             db_connection: Optional database connection for storing results
@@ -119,7 +114,7 @@ class OCREngine:
             confidence_threshold: Minimum confidence for text recognition
             enable_gpu: Whether to use GPU acceleration (if available)
         """
-        self.processor_type = "ocr_engine"
+        self.processor_type = "pdf_ocr_engine"
         self.db_connection = db_connection
         self.language = language
         self.confidence_threshold = confidence_threshold
@@ -140,20 +135,14 @@ class OCREngine:
         else:
             logger.warning("EasyOCR not available - OCR functionality disabled")
         
-        # Check cairosvg availability
-        if not CAIROSVG_AVAILABLE:
-            if '_cairosvg_error' in globals() and 'cairo' in _cairosvg_error:
-                logger.error("Cairo graphics library not found. Install with: brew install cairo (macOS) or apt-get install libcairo2-dev (Ubuntu)")
-            else:
-                logger.warning("cairosvg not available - SVG conversion disabled")
+        # Check pdf2image availability
+        if not PDF2IMAGE_AVAILABLE:
+            logger.error("pdf2image not available. Install with: pip install pdf2image")
         
-        # Image processing settings
+        # Image processing settings for reMarkable PDFs
         self.image_settings = {
             'dpi': 300,  # High DPI for better OCR accuracy
-            'background_color': 'white',
-            'stroke_color': 'black',
-            'stroke_width_multiplier': 1.2,  # Slightly thicker strokes for better recognition
-            'gaussian_blur_radius': 0.5,  # Slight blur to smooth jagged edges
+            'gaussian_blur_radius': 0.5,  # Slight blur to smooth edges
             'contrast_enhancement': 1.2,  # Increase contrast
             'resize_factor': 1.0,  # Factor to resize image before OCR
         }
@@ -167,11 +156,11 @@ class OCREngine:
             'merge_distance_threshold': 50,  # Pixel distance for merging
         }
         
-        logger.info(f"OCR Engine initialized (available: {self.is_available()})")
+        logger.info(f"PDF OCR Engine initialized (available: {self.is_available()})")
     
     def is_available(self) -> bool:
         """Check if OCR functionality is available."""
-        return EASYOCR_AVAILABLE and CAIROSVG_AVAILABLE and self.reader is not None
+        return EASYOCR_AVAILABLE and PDF2IMAGE_AVAILABLE and self.reader is not None
     
     def _check_gpu_availability(self) -> bool:
         """Check if GPU is available for OCR processing."""
@@ -182,35 +171,22 @@ class OCREngine:
             return False
     
     def can_process(self, file_path: str) -> bool:
-        """Check if file can be processed by OCR engine."""
+        """Check if file can be processed by PDF OCR engine."""
         if not self.is_available():
             return False
         
-        # Check if it's a .rm file (handwritten content)
-        if file_path.endswith('.rm'):
+        # Check if it's a PDF file
+        if file_path.lower().endswith('.pdf'):
             return True
-        
-        # Check if it's a .content file for notebooks (not PDFs/EPUBs)
-        if file_path.endswith('.content'):
-            try:
-                with open(file_path, 'r') as f:
-                    content_data = json.load(f)
-                
-                # Only process empty documents (notebooks) not imported PDFs/EPUBs
-                file_type = content_data.get('fileType', '')
-                return file_type == '' or file_type == 'notebook'
-            except Exception as e:
-                logger.debug(f"Could not read content file {file_path}: {e}")
-                return False
         
         return False
     
     def process_file(self, file_path: str) -> ProcessingResult:
         """
-        Process a file and extract text using OCR.
+        Process a PDF file and extract text using OCR.
         
         Args:
-            file_path: Path to the file to process
+            file_path: Path to the PDF file to process
             
         Returns:
             ProcessingResult with OCR results
@@ -224,7 +200,7 @@ class OCREngine:
                 file_path=file_path,
                 processor_type=self.processor_type,
                 ocr_results=[],
-                error_message="OCR engine not available"
+                error_message="PDF OCR engine not available"
             )
         
         if not self.can_process(file_path):
@@ -233,45 +209,63 @@ class OCREngine:
                 file_path=file_path,
                 processor_type=self.processor_type,
                 ocr_results=[],
-                error_message="File cannot be processed by OCR engine"
+                error_message="File cannot be processed by PDF OCR engine"
             )
         
         try:
-            logger.info(f"Processing file with OCR: {file_path}")
+            logger.info(f"Processing PDF with OCR: {file_path}")
             
-            if file_path.endswith('.rm'):
-                ocr_results = self._process_rm_file(file_path)
-            elif file_path.endswith('.content'):
-                ocr_results = self._process_content_file(file_path)
-            else:
-                raise ValueError(f"Unsupported file type: {file_path}")
+            # Convert PDF to images
+            images = self._pdf_to_images(file_path)
+            if not images:
+                raise ValueError("Failed to convert PDF to images")
+            
+            # Process each page
+            all_ocr_results = []
+            for page_num, image in enumerate(images, 1):
+                logger.debug(f"Processing page {page_num}/{len(images)}")
+                
+                # Preprocess image for better OCR
+                processed_image = self._preprocess_image(image)
+                
+                # Perform OCR on this page
+                page_results = self._perform_ocr(processed_image)
+                
+                # Add page number to results
+                for result in page_results:
+                    result.page_number = page_num
+                
+                all_ocr_results.extend(page_results)
             
             # Store results in database if available
-            if self.db_connection and ocr_results:
-                self._store_ocr_results(ocr_results, file_path)
+            if self.db_connection and all_ocr_results:
+                self._store_ocr_results(all_ocr_results, file_path)
             
             # Emit OCR completed event
             event_bus = get_event_bus()
             if event_bus:
                 event_bus.emit(EventType.OCR_COMPLETED, {
                     'file_path': file_path,
-                    'text_count': len(ocr_results),
+                    'text_count': len(all_ocr_results),
+                    'page_count': len(images),
                     'processor_type': self.processor_type,
-                    'total_confidence': sum(r.confidence for r in ocr_results) / len(ocr_results) if ocr_results else 0.0
+                    'total_confidence': sum(r.confidence for r in all_ocr_results) / len(all_ocr_results) if all_ocr_results else 0.0
                 })
             
             processing_time = int((time.time() - start_time) * 1000)
+            
+            logger.info(f"OCR completed: {len(all_ocr_results)} text regions from {len(images)} pages")
             
             return ProcessingResult(
                 success=True,
                 file_path=file_path,
                 processor_type=self.processor_type,
-                ocr_results=ocr_results,
+                ocr_results=all_ocr_results,
                 processing_time_ms=processing_time
             )
             
         except Exception as e:
-            logger.error(f"OCR processing failed for {file_path}: {e}")
+            logger.error(f"PDF OCR processing failed for {file_path}: {e}")
             processing_time = int((time.time() - start_time) * 1000)
             
             return ProcessingResult(
@@ -283,136 +277,26 @@ class OCREngine:
                 processing_time_ms=processing_time
             )
     
-    def _process_rm_file(self, rm_file_path: str) -> List[OCRResult]:
-        """Process a single .rm file."""
-        try:
-            # Convert .rm file to SVG
-            converter = RmToSvgConverter()
-            svg_content = converter.convert_file(rm_file_path)
-            
-            if not svg_content:
-                logger.warning(f"No SVG content generated from {rm_file_path}")
-                return []
-            
-            # Convert SVG to image
-            image = self._svg_to_image(svg_content)
-            if image is None:
-                logger.warning(f"Failed to convert SVG to image for {rm_file_path}")
-                return []
-            
-            # Preprocess image for better OCR
-            processed_image = self._preprocess_image(image)
-            
-            # Perform OCR
-            ocr_results = self._perform_ocr(processed_image)
-            
-            # Add page information if available
-            page_number = Path(rm_file_path).stem
-            for result in ocr_results:
-                result.page_number = page_number
-            
-            return ocr_results
-            
-        except Exception as e:
-            logger.error(f"Error processing .rm file {rm_file_path}: {e}")
-            return []
-    
-    def _process_content_file(self, content_file_path: str) -> List[OCRResult]:
-        """Process a .content file (notebook with multiple pages)."""
-        try:
-            # Load document info
-            doc_info = self._load_document_info(content_file_path)
-            
-            # Find associated .rm files
-            rm_files = self._find_rm_files(doc_info)
-            
-            all_ocr_results = []
-            
-            for rm_file in rm_files:
-                logger.debug(f"Processing .rm file: {rm_file}")
-                results = self._process_rm_file(rm_file)
-                all_ocr_results.extend(results)
-            
-            logger.info(f"OCR extracted {len(all_ocr_results)} text regions from {len(rm_files)} pages")
-            
-            return all_ocr_results
-            
-        except Exception as e:
-            logger.error(f"Error processing content file {content_file_path}: {e}")
-            return []
-    
-    def _load_document_info(self, content_file_path: str):
-        """Load document information from .content file."""
-        content_file_path = Path(content_file_path)
-        
-        # Load .content file
-        with open(content_file_path, 'r') as f:
-            content_data = json.load(f)
-        
-        content_id = content_file_path.stem
-        
-        # Load .metadata file for title
-        metadata_file = content_file_path.parent / f"{content_id}.metadata"
-        title = "Unknown Title"
-        
-        if metadata_file.exists():
-            try:
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-                title = metadata.get('visibleName', title)
-            except Exception as e:
-                logger.warning(f"Could not read metadata file {metadata_file}: {e}")
-        
-        return {
-            'content_id': content_id,
-            'title': title,
-            'content_data': content_data,
-            'content_file_path': str(content_file_path)
-        }
-    
-    def _find_rm_files(self, doc_info: Dict) -> List[str]:
-        """Find .rm files associated with the document."""
-        content_path = Path(doc_info['content_file_path'])
-        subdirectory = content_path.parent / doc_info['content_id']
-        
-        if not subdirectory.exists():
+    def _pdf_to_images(self, pdf_path: str) -> List[Image.Image]:
+        """Convert PDF file to list of PIL Images."""
+        if not PDF2IMAGE_AVAILABLE:
+            logger.error("pdf2image not available for PDF to image conversion")
             return []
         
-        rm_files = []
-        for file_path in subdirectory.iterdir():
-            if file_path.suffix == '.rm':
-                # Skip .rm files that have corresponding metadata (these are usually imports)
-                json_file = subdirectory / f"{file_path.stem}-metadata.json"
-                if not json_file.exists():
-                    rm_files.append(str(file_path))
-        
-        return sorted(rm_files)  # Sort for consistent processing order
-    
-    def _svg_to_image(self, svg_content: str) -> Optional[Image.Image]:
-        """Convert SVG content to PIL Image."""
-        if not CAIROSVG_AVAILABLE:
-            logger.error("cairosvg not available for SVG to image conversion")
-            return None
-        
         try:
-            # Convert SVG to PNG bytes
-            png_bytes = cairosvg.svg2png(
-                bytestring=svg_content.encode('utf-8'),
-                dpi=self.image_settings['dpi']
+            # Convert PDF to images with high DPI for better OCR
+            images = convert_from_path(
+                pdf_path,
+                dpi=self.image_settings['dpi'],
+                fmt='RGB'
             )
             
-            # Load as PIL Image
-            image = Image.open(io.BytesIO(png_bytes))
-            
-            # Convert to RGB if needed
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            return image
+            logger.debug(f"Converted PDF to {len(images)} images")
+            return images
             
         except Exception as e:
-            logger.error(f"Error converting SVG to image: {e}")
-            return None
+            logger.error(f"Error converting PDF to images: {e}")
+            return []
     
     def _preprocess_image(self, image: Image.Image) -> Image.Image:
         """Preprocess image for better OCR accuracy."""
@@ -438,7 +322,6 @@ class OCREngine:
             # Enhance contrast
             contrast_factor = self.image_settings['contrast_enhancement']
             if contrast_factor != 1.0:
-                from PIL import ImageEnhance
                 enhancer = ImageEnhance.Contrast(image)
                 image = enhancer.enhance(contrast_factor)
             
@@ -506,7 +389,7 @@ class OCREngine:
             if self.text_filters['merge_nearby_text']:
                 ocr_results = self._merge_nearby_text(ocr_results)
             
-            logger.info(f"OCR found {len(ocr_results)} text regions")
+            logger.debug(f"OCR found {len(ocr_results)} text regions")
             
             return ocr_results
             
@@ -691,17 +574,17 @@ class OCREngine:
 
 # Utility functions for standalone usage
 
-def process_directory_with_ocr(
+def process_directory_with_pdf_ocr(
     directory_path: str, 
     db_manager: Optional[DatabaseManager] = None,
     language: str = 'en',
     confidence_threshold: float = 0.7
 ) -> Dict[str, int]:
     """
-    Process all .rm and notebook .content files in a directory with OCR.
+    Process all PDF files in a directory with OCR.
     
     Args:
-        directory_path: Directory containing reMarkable files
+        directory_path: Directory containing PDF files
         db_manager: Optional database manager
         language: Language for OCR
         confidence_threshold: Minimum confidence threshold
@@ -710,48 +593,46 @@ def process_directory_with_ocr(
         Dictionary mapping file paths to text region counts
     """
     if not db_manager:
-        db_manager = DatabaseManager("ocr_results.db")
+        db_manager = DatabaseManager("pdf_ocr_results.db")
     
     results = {}
     
     try:
         with db_manager.get_connection() as conn:
-            ocr_engine = OCREngine(
+            ocr_engine = PDFOCREngine(
                 db_connection=conn,
                 language=language,
                 confidence_threshold=confidence_threshold
             )
             
             if not ocr_engine.is_available():
-                logger.error("OCR engine not available - check EasyOCR and cairosvg installation")
+                logger.error("PDF OCR engine not available - check EasyOCR and pdf2image installation")
                 return results
             
-            logger.info(f"Processing directory with OCR: {directory_path}")
+            logger.info(f"Processing directory with PDF OCR: {directory_path}")
             
-            # Process files
+            # Process PDF files
             for root, _, files in os.walk(directory_path):
                 for file_name in files:
-                    file_path = os.path.join(root, file_name)
-                    
-                    if ocr_engine.can_process(file_path):
-                        logger.info(f"Processing: {os.path.basename(file_path)}")
+                    if file_name.lower().endswith('.pdf'):
+                        file_path = os.path.join(root, file_name)
+                        
+                        logger.info(f"Processing: {file_name}")
                         
                         result = ocr_engine.process_file(file_path)
                         
                         if result.success:
                             text_count = len(result.ocr_results)
                             results[file_path] = text_count
-                            logger.info(f"   � Extracted {text_count} text regions")
+                            logger.info(f"   ✓ Extracted {text_count} text regions")
                         else:
-                            logger.error(f"   L Failed: {result.error_message}")
+                            logger.error(f"   ✗ Failed: {result.error_message}")
                             results[file_path] = 0
-                    else:
-                        logger.debug(f"Skipping: {os.path.basename(file_path)} (not processable)")
             
-        logger.info(f"OCR processing complete: {sum(results.values())} total text regions")
+        logger.info(f"PDF OCR processing complete: {sum(results.values())} total text regions")
         
     except Exception as e:
-        logger.error(f"Error in process_directory_with_ocr: {e}")
+        logger.error(f"Error in process_directory_with_pdf_ocr: {e}")
         import traceback
         logger.error(traceback.format_exc())
     
@@ -762,8 +643,8 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python ocr_engine.py <directory_or_file_path> [--language en] [--confidence 0.7]")
-        print("  directory_or_file_path: Directory or file to process")
+        print("Usage: python pdf_ocr_engine.py <directory_or_file_path> [--language en] [--confidence 0.7]")
+        print("  directory_or_file_path: Directory or PDF file to process")
         print("  --language: OCR language (default: en)")
         print("  --confidence: Minimum confidence threshold (default: 0.7)")
         sys.exit(1)
@@ -780,15 +661,15 @@ if __name__ == "__main__":
             confidence = float(sys.argv[i + 1])
     
     if os.path.isdir(target_path):
-        print("OCR Processing Directory")
+        print("PDF OCR Processing Directory")
         print("=" * 40)
         
-        results = process_directory_with_ocr(target_path, language=language, confidence_threshold=confidence)
+        results = process_directory_with_pdf_ocr(target_path, language=language, confidence_threshold=confidence)
         
         total_regions = sum(results.values())
         processed_files = len([count for count in results.values() if count > 0])
         
-        print(f"\nOCR processing complete!")
+        print(f"\nPDF OCR processing complete!")
         print(f"   Files processed: {len(results)}")
         print(f"   Files with text: {processed_files}")
         print(f"   Total text regions: {total_regions}")
@@ -801,16 +682,16 @@ if __name__ == "__main__":
                     print(f"   {file_name}: {count} text regions")
             
             # Export to CSV
-            output_csv = os.path.join(target_path, "ocr_results.csv")
+            output_csv = os.path.join(target_path, "pdf_ocr_results.csv")
             try:
-                db_manager = DatabaseManager("ocr_results.db")
+                db_manager = DatabaseManager("pdf_ocr_results.db")
                 with db_manager.get_connection() as conn:
-                    ocr_engine = OCREngine(conn)
+                    ocr_engine = PDFOCREngine(conn)
                     ocr_engine.export_ocr_results_to_csv(output_csv)
-                    print(f"\nOCR results exported to: {output_csv}")
+                    print(f"\nPDF OCR results exported to: {output_csv}")
             except Exception as e:
                 print(f"Could not export CSV: {e}")
         
     else:
-        print("Single file processing not yet implemented")
+        print("Single PDF file processing not yet implemented")
         print("Use directory processing instead")

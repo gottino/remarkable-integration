@@ -2,6 +2,16 @@
 test_data/
 data/
 
+# OS-specific
+.DS_Store
+
+# Local configuration that may contain credentials
+config.yaml
+test-config.yaml
+
+# Backups
+backups/
+
 # Databases & CSV files
 *.db
 *.csv

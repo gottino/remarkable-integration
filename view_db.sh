@@ -2,12 +2,12 @@
 
 # Quick commands to view your migration_test.db database content
 
-echo "🔍 Quick Database Viewing Options for migration_test.db"
+echo "🔍 Quick Database Viewing Options for debug_final_test.db"
 echo "======================================================"
 
-DB_PATH="data/migration_test.db"
+DB_PATH="./debug_final_test.db"
 if [ ! -f "$DB_PATH" ]; then
-    DB_PATH="migration_test.db"
+    DB_PATH="debug_final_test.db"
 fi
 
 if [ ! -f "$DB_PATH" ]; then
@@ -66,7 +66,7 @@ case $choice in
         ;;
     4)
         echo "📤 Exporting highlights to CSV..."
-        sqlite3 -header -csv "$DB_PATH" "SELECT * FROM highlights;" > highlights_export.csv
+        sqlite3 -header -csv "$DB_PATH" "SELECT * FROM enhanced_highlights;" > enhanced_highlights_export.csv
         echo "✅ Exported to highlights_export.csv"
         ;;
     5)

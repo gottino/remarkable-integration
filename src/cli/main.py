@@ -29,6 +29,8 @@ from src.processors.enhanced_highlight_extractor import (
     process_directory_enhanced,
     compare_extraction_methods
 )
+from src.processors.ocr_engine import OCREngine, process_directory_with_ocr
+from src.processors.pdf_ocr_engine import PDFOCREngine, process_directory_with_pdf_ocr
 
 
 # Configure logging
@@ -422,13 +424,94 @@ def process_file(ctx, file_path: str, enhanced: bool, show: bool):
         sys.exit(1)
 
 
-@cli.command('export')
-@click.option('--output', '-o', required=True, help='Output CSV file path')
-@click.option('--enhanced', is_flag=True, help='Export enhanced highlights')
-@click.option('--title', help='Filter by document title')
+@cli.group()
 @click.pass_context
-def export_highlights(ctx, output: str, enhanced: bool, title: Optional[str]):
-    """Export highlights to CSV file."""
+def ocr(ctx):
+    """OCR processing commands for handwritten text.
+    
+    Supports both reMarkable files (.rm) and PDF files.
+    For PDF processing: Requires EasyOCR and pdf2image
+    For .rm processing: Requires EasyOCR, cairosvg and system Cairo library
+    """
+    pass
+
+
+@ocr.command('directory')
+@click.argument('directory')
+@click.option('--language', default='en', help='OCR language (default: en)')
+@click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
+@click.option('--export', help='Export OCR results to CSV file')
+@click.pass_context
+def ocr_directory(ctx, directory: str, language: str, confidence: float, export: Optional[str]):
+    """Process directory with OCR for handwritten text recognition."""
+    
+    if not os.path.exists(directory):
+        click.echo(f"Directory not found: {directory}", err=True)
+        sys.exit(1)
+    
+    config_obj = ctx.obj['config']
+    db_path = config_obj.get('database.path')
+    
+    try:
+        db_manager = DatabaseManager(db_path)
+        
+        # Check if OCR is available
+        with db_manager.get_connection() as conn:
+            ocr_engine = OCREngine(conn, language=language, confidence_threshold=confidence)
+            if not ocr_engine.is_available():
+                click.echo("OCR engine not available. Please install EasyOCR and cairosvg:", err=True)
+                click.echo("  poetry add easyocr cairosvg", err=True)
+                sys.exit(1)
+        
+        click.echo(f"Processing directory with OCR (language: {language}, confidence: {confidence})...")
+        results = process_directory_with_ocr(
+            directory, 
+            db_manager, 
+            language=language, 
+            confidence_threshold=confidence
+        )
+        
+        total_regions = sum(results.values())
+        processed_files = len([count for count in results.values() if count > 0])
+        
+        click.echo(f"\nOCR Processing Results:")
+        click.echo(f"  Files processed: {len(results)}")
+        click.echo(f"  Files with text: {processed_files}")
+        click.echo(f"  Total text regions: {total_regions}")
+        
+        if total_regions > 0:
+            click.echo(f"\nResults by file:")
+            for file_path, count in results.items():
+                if count > 0:
+                    file_name = os.path.basename(file_path)
+                    click.echo(f"  {file_name}: {count} text regions")
+        
+        # Export if requested
+        if export:
+            click.echo(f"\nExporting OCR results to {export}...")
+            with db_manager.get_connection() as conn:
+                ocr_engine = OCREngine(conn)
+                ocr_engine.export_ocr_results_to_csv(export)
+            click.echo("Export completed")
+            
+    except Exception as e:
+        click.echo(f"OCR processing failed: {e}", err=True)
+        logging.exception("OCR processing error")
+        sys.exit(1)
+
+
+@ocr.command('file')
+@click.argument('file_path')
+@click.option('--language', default='en', help='OCR language (default: en)')
+@click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
+@click.option('--show', is_flag=True, help='Display recognized text')
+@click.pass_context
+def ocr_file(ctx, file_path: str, language: str, confidence: float, show: bool):
+    """Process a single file with OCR."""
+    
+    if not os.path.exists(file_path):
+        click.echo(f"File not found: {file_path}", err=True)
+        sys.exit(1)
     
     config_obj = ctx.obj['config']
     db_path = config_obj.get('database.path')
@@ -437,7 +520,184 @@ def export_highlights(ctx, output: str, enhanced: bool, title: Optional[str]):
         db_manager = DatabaseManager(db_path)
         
         with db_manager.get_connection() as conn:
-            if enhanced:
+            ocr_engine = OCREngine(conn, language=language, confidence_threshold=confidence)
+            
+            if not ocr_engine.is_available():
+                click.echo("OCR engine not available. Please install EasyOCR and cairosvg:", err=True)
+                click.echo("  poetry add easyocr cairosvg", err=True)
+                sys.exit(1)
+            
+            if not ocr_engine.can_process(file_path):
+                click.echo(f"Cannot process file: {file_path}", err=True)
+                click.echo("File must be a .rm file or notebook .content file")
+                sys.exit(1)
+            
+            click.echo(f"Processing with OCR (language: {language}, confidence: {confidence})...")
+            result = ocr_engine.process_file(file_path)
+            
+            if result.success:
+                ocr_results = result.ocr_results
+                click.echo(f"Recognized {len(ocr_results)} text regions")
+                
+                if show and ocr_results:
+                    click.echo(f"\nRecognized text:")
+                    for i, ocr_result in enumerate(ocr_results, 1):
+                        confidence_pct = ocr_result.confidence * 100
+                        page = ocr_result.page_number or "Unknown"
+                        click.echo(f"\n{i}. Page {page} (confidence: {confidence_pct:.1f}%):")
+                        click.echo(f"   {ocr_result.text}")
+            else:
+                click.echo(f"OCR processing failed: {result.error_message}", err=True)
+                sys.exit(1)
+                
+    except Exception as e:
+        click.echo(f"OCR processing failed: {e}", err=True)
+        logging.exception("OCR processing error")
+        sys.exit(1)
+
+
+@ocr.command('pdf-directory')
+@click.argument('directory')
+@click.option('--language', default='en', help='OCR language (default: en)')
+@click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
+@click.option('--export', help='Export OCR results to CSV file')
+@click.pass_context
+def ocr_pdf_directory(ctx, directory: str, language: str, confidence: float, export: Optional[str]):
+    """Process directory of PDF files with OCR for handwritten text recognition."""
+    
+    if not os.path.exists(directory):
+        click.echo(f"Directory not found: {directory}", err=True)
+        sys.exit(1)
+    
+    config_obj = ctx.obj['config']
+    db_path = config_obj.get('database.path')
+    
+    try:
+        db_manager = DatabaseManager(db_path)
+        
+        # Check if PDF OCR is available
+        with db_manager.get_connection() as conn:
+            pdf_ocr_engine = PDFOCREngine(conn, language=language, confidence_threshold=confidence)
+            if not pdf_ocr_engine.is_available():
+                click.echo("PDF OCR engine not available. Please install EasyOCR and pdf2image:", err=True)
+                click.echo("  poetry add easyocr pdf2image", err=True)
+                sys.exit(1)
+        
+        click.echo(f"Processing PDF directory with OCR (language: {language}, confidence: {confidence})...")
+        results = process_directory_with_pdf_ocr(
+            directory, 
+            db_manager, 
+            language=language, 
+            confidence_threshold=confidence
+        )
+        
+        total_regions = sum(results.values())
+        processed_files = len([count for count in results.values() if count > 0])
+        
+        click.echo(f"\nPDF OCR Processing Results:")
+        click.echo(f"  Files processed: {len(results)}")
+        click.echo(f"  Files with text: {processed_files}")
+        click.echo(f"  Total text regions: {total_regions}")
+        
+        if total_regions > 0:
+            click.echo(f"\nResults by file:")
+            for file_path, count in results.items():
+                if count > 0:
+                    file_name = os.path.basename(file_path)
+                    click.echo(f"  {file_name}: {count} text regions")
+        
+        # Export if requested
+        if export:
+            click.echo(f"\nExporting PDF OCR results to {export}...")
+            with db_manager.get_connection() as conn:
+                pdf_ocr_engine = PDFOCREngine(conn)
+                pdf_ocr_engine.export_ocr_results_to_csv(export)
+            click.echo("Export completed")
+            
+    except Exception as e:
+        click.echo(f"PDF OCR processing failed: {e}", err=True)
+        logging.exception("PDF OCR processing error")
+        sys.exit(1)
+
+
+@ocr.command('pdf-file')
+@click.argument('file_path')
+@click.option('--language', default='en', help='OCR language (default: en)')
+@click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
+@click.option('--show', is_flag=True, help='Display recognized text')
+@click.pass_context
+def ocr_pdf_file(ctx, file_path: str, language: str, confidence: float, show: bool):
+    """Process a single PDF file with OCR."""
+    
+    if not os.path.exists(file_path):
+        click.echo(f"File not found: {file_path}", err=True)
+        sys.exit(1)
+    
+    config_obj = ctx.obj['config']
+    db_path = config_obj.get('database.path')
+    
+    try:
+        db_manager = DatabaseManager(db_path)
+        
+        with db_manager.get_connection() as conn:
+            pdf_ocr_engine = PDFOCREngine(conn, language=language, confidence_threshold=confidence)
+            
+            if not pdf_ocr_engine.is_available():
+                click.echo("PDF OCR engine not available. Please install EasyOCR and pdf2image:", err=True)
+                click.echo("  poetry add easyocr pdf2image", err=True)
+                sys.exit(1)
+            
+            if not pdf_ocr_engine.can_process(file_path):
+                click.echo(f"Cannot process file: {file_path}", err=True)
+                click.echo("File must be a PDF file")
+                sys.exit(1)
+            
+            click.echo(f"Processing PDF with OCR (language: {language}, confidence: {confidence})...")
+            result = pdf_ocr_engine.process_file(file_path)
+            
+            if result.success:
+                ocr_results = result.ocr_results
+                click.echo(f"Recognized {len(ocr_results)} text regions")
+                
+                if show and ocr_results:
+                    click.echo(f"\nRecognized text:")
+                    for i, ocr_result in enumerate(ocr_results, 1):
+                        confidence_pct = ocr_result.confidence * 100
+                        page = ocr_result.page_number or "Unknown"
+                        click.echo(f"\n{i}. Page {page} (confidence: {confidence_pct:.1f}%):")
+                        click.echo(f"   {ocr_result.text}")
+            else:
+                click.echo(f"PDF OCR processing failed: {result.error_message}", err=True)
+                sys.exit(1)
+                
+    except Exception as e:
+        click.echo(f"PDF OCR processing failed: {e}", err=True)
+        logging.exception("PDF OCR processing error")
+        sys.exit(1)
+
+
+@cli.command('export')
+@click.option('--output', '-o', required=True, help='Output CSV file path')
+@click.option('--enhanced', is_flag=True, help='Export enhanced highlights')
+@click.option('--ocr', is_flag=True, help='Export OCR results')
+@click.option('--title', help='Filter by document title')
+@click.option('--source-file', help='Filter by source file path')
+@click.pass_context
+def export_data(ctx, output: str, enhanced: bool, ocr: bool, title: Optional[str], source_file: Optional[str]):
+    """Export highlights or OCR results to CSV file."""
+    
+    config_obj = ctx.obj['config']
+    db_path = config_obj.get('database.path')
+    
+    try:
+        db_manager = DatabaseManager(db_path)
+        
+        with db_manager.get_connection() as conn:
+            if ocr:
+                ocr_engine = OCREngine(conn)
+                ocr_engine.export_ocr_results_to_csv(output, source_file)
+                item_type = "OCR results"
+            elif enhanced:
                 extractor = EnhancedHighlightExtractor(conn)
                 extractor.export_enhanced_highlights_to_csv(output, title)
                 item_type = "enhanced highlights"
@@ -450,10 +710,14 @@ def export_highlights(ctx, output: str, enhanced: bool, title: Optional[str]):
         
         if title:
             click.echo(f"(filtered by title: {title})")
+        elif source_file:
+            click.echo(f"(filtered by source file: {source_file})")
             
     except Exception as e:
         click.echo(f"Export failed: {e}", err=True)
         sys.exit(1)
+
+
 
 
 @cli.command('watch')
