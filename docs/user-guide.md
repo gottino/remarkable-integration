@@ -148,6 +148,43 @@ The system recognizes your date annotation patterns:
 - `Code snippets` recognition
 - Proper line breaks and spacing
 
+### Smart Todo Extraction
+
+The system automatically extracts checkboxes and creates a separate `todos.md` file alongside your notebook content.
+
+**Recognized Todo Patterns:**
+- `□ Task description` → Unchecked todo
+- `☑ Task description` → Checked todo  
+- `- [ ] Task description` → Unchecked todo
+- `- [x] Task description` → Checked todo
+- `* [ ] Task description` → Unchecked todo
+- `* [✓] Task description` → Checked todo
+
+**Todo Metadata:**
+Each extracted todo includes:
+- ✅ **Status**: Completed or pending
+- 📝 **Text**: The todo description
+- 📚 **Source**: Notebook name and page number
+- 📅 **Date**: From page date annotations (if available)
+- 🎯 **Confidence**: OCR confidence score
+
+**Example todos.md output:**
+```markdown
+# Todo Items
+
+## 📋 Pending
+- [ ] Update project documentation
+  - **Source**: Meeting Notes (Page 2)
+  - **Date**: 15-08-2025
+  - **Confidence**: 0.95
+
+## ✅ Completed  
+- [x] Review quarterly budget
+  - **Source**: Planning Session (Page 1)
+  - **Date**: 14-08-2025
+  - **Confidence**: 0.88
+```
+
 ### Multi-Language Support
 
 **Automatically handles:**

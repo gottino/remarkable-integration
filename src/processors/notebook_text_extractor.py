@@ -35,6 +35,30 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class TodoItem:
+    """A todo item extracted from handwritten notes."""
+    text: str
+    completed: bool
+    notebook_name: str
+    notebook_uuid: str
+    page_number: int
+    date_extracted: Optional[str] = None  # Date from page annotation
+    confidence: float = 0.0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for export."""
+        return {
+            'text': self.text,
+            'completed': self.completed,
+            'notebook_name': self.notebook_name,
+            'notebook_uuid': self.notebook_uuid,
+            'page_number': self.page_number,
+            'date_extracted': self.date_extracted,
+            'confidence': self.confidence
+        }
+
+
+@dataclass
 class NotebookPage:
     """Information about a notebook page."""
     page_uuid: str
@@ -52,6 +76,7 @@ class NotebookTextResult:
     pages: List[NotebookPage]
     total_text_regions: int
     processing_time_ms: int
+    todos: List[TodoItem]
     error_message: Optional[str] = None
     
     def get_full_text(self, separator: str = "\n") -> str:
@@ -88,6 +113,77 @@ class NotebookTextResult:
             page_texts[page.page_number] = " ".join(page_text)
         
         return page_texts
+    
+    def extract_todos(self) -> List[TodoItem]:
+        """Extract todo items from OCR results."""
+        import re
+        
+        todos = []
+        
+        for page in self.pages:
+            # Extract date from page (if available)
+            page_date = self._extract_date_from_page(page)
+            
+            for ocr_result in page.ocr_results:
+                text = ocr_result.text.strip()
+                
+                # Look for checkbox patterns
+                todo_patterns = [
+                    # Checked boxes
+                    (r'[\-\*]?\s*[\[\(]?[x✓✔☑]\s*[\]\)]?\s*(.+)', True),
+                    # Unchecked boxes  
+                    (r'[\-\*]?\s*[\[\(]?[\s☐□]\s*[\]\)]?\s*(.+)', False),
+                    # Simple dash/bullet todos
+                    (r'[\-\*]\s*\[\s*\]\s*(.+)', False),
+                    (r'[\-\*]\s*\[[x✓]\]\s*(.+)', True),
+                ]
+                
+                for pattern, completed in todo_patterns:
+                    match = re.match(pattern, text, re.IGNORECASE)
+                    if match:
+                        todo_text = match.group(1).strip()
+                        if todo_text and len(todo_text) > 2:  # Filter out very short matches
+                            todo = TodoItem(
+                                text=todo_text,
+                                completed=completed,
+                                notebook_name=self.notebook_name,
+                                notebook_uuid=self.notebook_uuid,
+                                page_number=page.page_number,
+                                date_extracted=page_date,
+                                confidence=ocr_result.confidence
+                            )
+                            todos.append(todo)
+                        break  # Don't match multiple patterns for same text
+        
+        return todos
+    
+    def _extract_date_from_page(self, page: NotebookPage) -> Optional[str]:
+        """Extract date annotation from a page."""
+        import re
+        
+        # Look for date patterns in upper area of page (date annotations)
+        date_patterns = [
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*[┘\]\)┐]?',
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2})\s*[┘\]\)┐]?'
+        ]
+        
+        # Only look at OCR results from upper part of page (dates are usually in corners)
+        upper_results = [r for r in page.ocr_results if r.bounding_box.y < 200]
+        
+        for result in upper_results:
+            text = result.text.strip()
+            for pattern in date_patterns:
+                match = re.search(pattern, text)
+                if match:
+                    date_str = match.group(1)
+                    # Normalize date format to dd-mm-yyyy
+                    if len(date_str.split('-')[2]) == 2:  # 2-digit year
+                        parts = date_str.split('-')
+                        if len(parts) == 3:
+                            date_str = f"{parts[0]}-{parts[1]}-20{parts[2]}"
+                    return date_str
+        
+        return None
 
 
 class NotebookTextExtractor:
@@ -229,6 +325,7 @@ class NotebookTextExtractor:
                 pages=[],
                 total_text_regions=0,
                 processing_time_ms=0,
+                todos=[],
                 error_message="OCR engine not available"
             )
         
@@ -305,14 +402,22 @@ class NotebookTextExtractor:
             
             logger.info(f"  ✓ Completed: {total_text_regions} text regions from {len(processed_pages)} pages")
             
-            return NotebookTextResult(
+            # Create result and extract todos
+            result = NotebookTextResult(
                 success=True,
                 notebook_uuid=uuid,
                 notebook_name=doc_name,
                 pages=processed_pages,
                 total_text_regions=total_text_regions,
-                processing_time_ms=processing_time
+                processing_time_ms=processing_time,
+                todos=[]
             )
+            
+            # Extract todos from the text
+            result.todos = result.extract_todos()
+            logger.info(f"  ✓ Extracted {len(result.todos)} todo items")
+            
+            return result
             
         except Exception as e:
             processing_time = int((time.time() - start_time) * 1000)
@@ -325,6 +430,7 @@ class NotebookTextExtractor:
                 pages=[],
                 total_text_regions=0,
                 processing_time_ms=processing_time,
+                todos=[],
                 error_message=str(e)
             )
     
@@ -620,6 +726,84 @@ class NotebookTextExtractor:
             raise ValueError(f"Unsupported format: {format}")
         
         logger.info(f"Exported text to {output_path}")
+    
+    def export_todos_to_file(
+        self, 
+        todos: List[TodoItem], 
+        output_file: str,
+        format: str = 'md'
+    ):
+        """
+        Export extracted todos to file.
+        
+        Args:
+            todos: List of TodoItem objects
+            output_file: Output file path
+            format: Output format ('txt', 'json', 'csv', 'md')
+        """
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        if format.lower() in ['txt', 'md']:
+            # Markdown format with organization
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write("# Todo Items\n\n")
+                f.write("*Extracted from handwritten notebooks*\n\n")
+                
+                # Group todos by completion status
+                completed_todos = [t for t in todos if t.completed]
+                pending_todos = [t for t in todos if not t.completed]
+                
+                if pending_todos:
+                    f.write("## 📋 Pending\n\n")
+                    for todo in pending_todos:
+                        f.write(f"- [ ] {todo.text}\n")
+                        f.write(f"  - **Source**: {todo.notebook_name} (Page {todo.page_number})\n")
+                        if todo.date_extracted:
+                            f.write(f"  - **Date**: {todo.date_extracted}\n")
+                        if todo.confidence > 0:
+                            f.write(f"  - **Confidence**: {todo.confidence:.2f}\n")
+                        f.write("\n")
+                
+                if completed_todos:
+                    f.write("## ✅ Completed\n\n")
+                    for todo in completed_todos:
+                        f.write(f"- [x] {todo.text}\n")
+                        f.write(f"  - **Source**: {todo.notebook_name} (Page {todo.page_number})\n")
+                        if todo.date_extracted:
+                            f.write(f"  - **Date**: {todo.date_extracted}\n")
+                        if todo.confidence > 0:
+                            f.write(f"  - **Confidence**: {todo.confidence:.2f}\n")
+                        f.write("\n")
+                
+                # Summary
+                f.write(f"---\n\n")
+                f.write(f"**Summary**: {len(pending_todos)} pending, {len(completed_todos)} completed ({len(todos)} total)\n")
+        
+        elif format.lower() == 'json':
+            # JSON format
+            data = {
+                'total_todos': len(todos),
+                'pending_count': len([t for t in todos if not t.completed]),
+                'completed_count': len([t for t in todos if t.completed]),
+                'todos': [todo.to_dict() for todo in todos]
+            }
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        elif format.lower() == 'csv':
+            # CSV format
+            import pandas as pd
+            
+            rows = [todo.to_dict() for todo in todos]
+            df = pd.DataFrame(rows)
+            df.to_csv(output_path, index=False)
+        
+        else:
+            raise ValueError(f"Unsupported format: {format}")
+        
+        logger.info(f"Exported {len(todos)} todos to {output_path}")
 
 
 # Utility functions for standalone usage
@@ -668,6 +852,9 @@ def extract_text_from_directory(
                 output_path = Path(output_dir)
                 output_path.mkdir(parents=True, exist_ok=True)
                 
+                # Collect all todos across notebooks
+                all_todos = []
+                
                 for result in results.values():
                     if result.success:
                         # Create safe filename
@@ -678,6 +865,15 @@ def extract_text_from_directory(
                         output_file = output_path / f"{safe_name}.{file_extension}"
                         
                         extractor.export_text_to_file(result, str(output_file), output_format)
+                        
+                        # Collect todos from this notebook
+                        all_todos.extend(result.todos)
+                
+                # Export todos to separate file if any were found
+                if all_todos:
+                    todos_file = output_path / f"todos.{output_format}"
+                    extractor.export_todos_to_file(all_todos, str(todos_file), output_format)
+                    logger.info(f"✓ Exported {len(all_todos)} todos to {todos_file}")
             
             return results
             

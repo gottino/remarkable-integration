@@ -11,6 +11,7 @@ Transform your handwritten reMarkable notes into searchable digital text with AI
 - **🌍 Multi-language Support**: Seamlessly handles mixed-language notes
 - **🎯 Symbol Recognition**: Arrows, bullets, checkboxes, and custom notation
 - **📊 Multiple Export Formats**: Markdown, JSON, CSV with page organization
+- **✅ Smart Todo Extraction**: Automatically extracts checkboxes into separate todo list
 
 ## Quick Start
 
