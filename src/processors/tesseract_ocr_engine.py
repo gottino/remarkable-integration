@@ -1,17 +1,18 @@
 """
-PDF OCR Engine for reMarkable Integration.
+Tesseract OCR Engine for reMarkable Integration.
 
-Handles optical character recognition of PDF files generated from reMarkable notebooks.
-Uses EasyOCR for text recognition and pdf2image for PDF to image conversion.
+Alternative OCR engine using pytesseract (Google's Tesseract) instead of EasyOCR.
+More lightweight and often has fewer dependency issues.
 """
 
 import os
 import logging
 import sqlite3
+import json
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from pathlib import Path
-import json
+import time
 
 # Core dependencies
 import numpy as np
@@ -19,19 +20,22 @@ from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 
 # OCR engine
 try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
+    import pytesseract
+    from PIL import Image
+    PYTESSERACT_AVAILABLE = True
 except (ImportError, ModuleNotFoundError) as e:
-    EASYOCR_AVAILABLE = False
+    PYTESSERACT_AVAILABLE = False
     import logging
-    logging.getLogger(__name__).info(f"EasyOCR not available: {e}")
+    logging.getLogger(__name__).info(f"pytesseract not available: {e}")
 
 # PDF processing
 try:
     from pdf2image import convert_from_path
     PDF2IMAGE_AVAILABLE = True
-except ImportError:
+except (ImportError, ModuleNotFoundError) as e:
     PDF2IMAGE_AVAILABLE = False
+    import logging
+    logging.getLogger(__name__).info(f"pdf2image not available: {e}")
 
 # Database and events
 from ..core.events import get_event_bus, EventType
@@ -97,47 +101,34 @@ class ProcessingResult:
         }
 
 
-class PDFOCREngine:
-    """OCR engine for processing PDF files generated from reMarkable notebooks."""
+class TesseractOCREngine:
+    """OCR engine for processing PDF files using Tesseract."""
     
     def __init__(
         self, 
         db_connection: Optional[sqlite3.Connection] = None,
-        language: str = 'en',
-        confidence_threshold: float = 0.7,
-        enable_gpu: bool = False
+        language: str = 'eng',
+        confidence_threshold: float = 70.0,
+        tesseract_config: str = '--psm 6'
     ):
         """
-        Initialize PDF OCR engine.
+        Initialize Tesseract OCR engine.
         
         Args:
             db_connection: Optional database connection for storing results
-            language: Language code for OCR (default: 'en')
-            confidence_threshold: Minimum confidence for text recognition
-            enable_gpu: Whether to use GPU acceleration (if available)
+            language: Language code for OCR (default: 'eng' for English)
+            confidence_threshold: Minimum confidence for text recognition (0-100)
+            tesseract_config: Tesseract configuration string
         """
-        self.processor_type = "pdf_ocr_engine"
+        self.processor_type = "tesseract_ocr_engine"
         self.db_connection = db_connection
         self.language = language
         self.confidence_threshold = confidence_threshold
-        self.enable_gpu = enable_gpu
+        self.tesseract_config = tesseract_config
         
-        # Initialize OCR reader
-        self.reader = None
-        if EASYOCR_AVAILABLE:
-            try:
-                self.reader = easyocr.Reader(
-                    [language], 
-                    gpu=enable_gpu and self._check_gpu_availability()
-                )
-                logger.info(f"EasyOCR initialized with language: {language}, GPU: {enable_gpu}")
-            except Exception as e:
-                logger.error(f"Failed to initialize EasyOCR: {e}")
-                self.reader = None
-        else:
-            logger.warning("EasyOCR not available - OCR functionality disabled")
+        # Check tesseract availability
+        self.tesseract_available = self._check_tesseract()
         
-        # Check pdf2image availability
         if not PDF2IMAGE_AVAILABLE:
             logger.error("pdf2image not available. Install with: pip install pdf2image")
         
@@ -158,22 +149,36 @@ class PDFOCREngine:
             'merge_distance_threshold': 50,  # Pixel distance for merging
         }
         
-        logger.info(f"PDF OCR Engine initialized (available: {self.is_available()})")
+        logger.info(f"Tesseract OCR Engine initialized (available: {self.is_available()})")
+        logger.info(f"  Language: {language}")
+        logger.info(f"  Confidence threshold: {confidence_threshold}")
+        logger.info(f"  Config: {tesseract_config}")
+    
+    def _check_tesseract(self) -> bool:
+        """Check if Tesseract is available."""
+        if not PYTESSERACT_AVAILABLE:
+            return False
+        
+        try:
+            # Try to get tesseract version
+            version = pytesseract.get_tesseract_version()
+            logger.info(f"Tesseract version: {version}")
+            return True
+        except Exception as e:
+            logger.error(f"Tesseract not available: {e}")
+            logger.error("To install Tesseract:")
+            logger.error("  macOS: brew install tesseract")
+            logger.error("  Ubuntu: apt-get install tesseract-ocr")
+            logger.error("  Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki")
+            logger.error("  Alternative: conda install -c conda-forge tesseract")
+            return False
     
     def is_available(self) -> bool:
         """Check if OCR functionality is available."""
-        return EASYOCR_AVAILABLE and PDF2IMAGE_AVAILABLE and self.reader is not None
-    
-    def _check_gpu_availability(self) -> bool:
-        """Check if GPU is available for OCR processing."""
-        try:
-            import torch
-            return torch.cuda.is_available()
-        except ImportError:
-            return False
+        return PYTESSERACT_AVAILABLE and PDF2IMAGE_AVAILABLE and self.tesseract_available
     
     def can_process(self, file_path: str) -> bool:
-        """Check if file can be processed by PDF OCR engine."""
+        """Check if file can be processed by Tesseract OCR engine."""
         if not self.is_available():
             return False
         
@@ -185,7 +190,7 @@ class PDFOCREngine:
     
     def process_file(self, file_path: str) -> ProcessingResult:
         """
-        Process a PDF file and extract text using OCR.
+        Process a PDF file and extract text using Tesseract OCR.
         
         Args:
             file_path: Path to the PDF file to process
@@ -193,7 +198,6 @@ class PDFOCREngine:
         Returns:
             ProcessingResult with OCR results
         """
-        import time
         start_time = time.time()
         
         if not self.is_available():
@@ -202,7 +206,7 @@ class PDFOCREngine:
                 file_path=file_path,
                 processor_type=self.processor_type,
                 ocr_results=[],
-                error_message="PDF OCR engine not available"
+                error_message="Tesseract OCR engine not available"
             )
         
         if not self.can_process(file_path):
@@ -211,11 +215,11 @@ class PDFOCREngine:
                 file_path=file_path,
                 processor_type=self.processor_type,
                 ocr_results=[],
-                error_message="File cannot be processed by PDF OCR engine"
+                error_message="File cannot be processed by Tesseract OCR engine"
             )
         
         try:
-            logger.info(f"Processing PDF with OCR: {file_path}")
+            logger.info(f"Processing PDF with Tesseract OCR: {file_path}")
             
             # Convert PDF to images
             images = self._pdf_to_images(file_path)
@@ -256,7 +260,7 @@ class PDFOCREngine:
             
             processing_time = int((time.time() - start_time) * 1000)
             
-            logger.info(f"OCR completed: {len(all_ocr_results)} text regions from {len(images)} pages")
+            logger.info(f"Tesseract OCR completed: {len(all_ocr_results)} text regions from {len(images)} pages")
             
             return ProcessingResult(
                 success=True,
@@ -267,7 +271,7 @@ class PDFOCREngine:
             )
             
         except Exception as e:
-            logger.error(f"PDF OCR processing failed for {file_path}: {e}")
+            logger.error(f"Tesseract OCR processing failed for {file_path}: {e}")
             processing_time = int((time.time() - start_time) * 1000)
             
             return ProcessingResult(
@@ -340,47 +344,50 @@ class PDFOCREngine:
             return image
     
     def _perform_ocr(self, image: Image.Image) -> List[OCRResult]:
-        """Perform OCR on the preprocessed image."""
-        if not self.reader:
-            logger.error("OCR reader not initialized")
+        """Perform OCR on the preprocessed image using Tesseract."""
+        if not self.tesseract_available:
+            logger.error("Tesseract not available")
             return []
         
         try:
-            # Convert PIL image to numpy array for EasyOCR
-            image_array = np.array(image)
-            
-            # Perform OCR
-            results = self.reader.readtext(image_array)
+            # Get OCR data with bounding boxes and confidence
+            ocr_data = pytesseract.image_to_data(
+                image,
+                lang=self.language,
+                config=self.tesseract_config,
+                output_type=pytesseract.Output.DICT
+            )
             
             ocr_results = []
             
-            for detection in results:
-                # EasyOCR returns: [bbox, text, confidence]
-                bbox, text, confidence = detection
+            # Process each detected text element
+            for i in range(len(ocr_data['text'])):
+                text = ocr_data['text'][i].strip()
+                confidence = float(ocr_data['conf'][i])
                 
-                if confidence < self.text_filters['min_confidence']:
+                # Skip empty text or low confidence
+                if not text or confidence < self.text_filters['min_confidence']:
                     continue
                 
-                if len(text.strip()) < self.text_filters['min_text_length']:
+                # Skip single characters if filtering enabled
+                if self.text_filters['filter_single_chars'] and len(text) == 1:
                     continue
                 
-                if self.text_filters['filter_single_chars'] and len(text.strip()) == 1:
+                # Skip very short text
+                if len(text) < self.text_filters['min_text_length']:
                     continue
                 
-                # Calculate bounding box
-                x_coords = [point[0] for point in bbox]
-                y_coords = [point[1] for point in bbox]
+                # Get bounding box
+                x = float(ocr_data['left'][i])
+                y = float(ocr_data['top'][i])
+                width = float(ocr_data['width'][i])
+                height = float(ocr_data['height'][i])
                 
-                bounding_box = BoundingBox(
-                    x=min(x_coords),
-                    y=min(y_coords),
-                    width=max(x_coords) - min(x_coords),
-                    height=max(y_coords) - min(y_coords)
-                )
+                bounding_box = BoundingBox(x=x, y=y, width=width, height=height)
                 
                 ocr_result = OCRResult(
-                    text=text.strip(),
-                    confidence=confidence,
+                    text=text,
+                    confidence=confidence / 100.0,  # Convert to 0-1 range
                     bounding_box=bounding_box,
                     language=self.language
                 )
@@ -391,12 +398,12 @@ class PDFOCREngine:
             if self.text_filters['merge_nearby_text']:
                 ocr_results = self._merge_nearby_text(ocr_results)
             
-            logger.debug(f"OCR found {len(ocr_results)} text regions")
+            logger.debug(f"Tesseract OCR found {len(ocr_results)} text regions")
             
             return ocr_results
             
         except Exception as e:
-            logger.error(f"Error performing OCR: {e}")
+            logger.error(f"Error performing Tesseract OCR: {e}")
             return []
     
     def _merge_nearby_text(self, ocr_results: List[OCRResult]) -> List[OCRResult]:
@@ -502,198 +509,44 @@ class PDFOCREngine:
                 ))
             
             self.db_connection.commit()
-            logger.info(f"Stored {len(ocr_results)} OCR results for {source_file}")
+            logger.info(f"Stored {len(ocr_results)} Tesseract OCR results for {source_file}")
             
         except Exception as e:
-            logger.error(f"Error storing OCR results: {e}")
-    
-    def get_ocr_results_for_file(self, source_file: str) -> List[Dict[str, Any]]:
-        """Retrieve OCR results for a specific file."""
-        if not self.db_connection:
-            return []
-        
-        try:
-            cursor = self.db_connection.cursor()
-            cursor.execute('''
-                SELECT source_file, page_number, text, confidence, language, bounding_box, created_at
-                FROM ocr_results 
-                WHERE source_file = ?
-                ORDER BY page_number, created_at
-            ''', (source_file,))
-            
-            columns = [description[0] for description in cursor.description]
-            results = cursor.fetchall()
-            
-            ocr_results = []
-            for row in results:
-                result_dict = dict(zip(columns, row))
-                
-                # Parse bounding box JSON
-                if result_dict['bounding_box']:
-                    try:
-                        result_dict['bounding_box'] = json.loads(result_dict['bounding_box'])
-                    except json.JSONDecodeError:
-                        result_dict['bounding_box'] = None
-                
-                ocr_results.append(result_dict)
-            
-            return ocr_results
-            
-        except Exception as e:
-            logger.error(f"Error retrieving OCR results for {source_file}: {e}")
-            return []
-    
-    def export_ocr_results_to_csv(self, output_path: str, source_file_filter: Optional[str] = None):
-        """Export OCR results to CSV file."""
-        if not self.db_connection:
-            logger.error("No database connection available for export")
-            return
-        
-        try:
-            import pandas as pd
-            
-            query = '''
-                SELECT source_file, page_number, text, confidence, language, created_at
-                FROM ocr_results
-            '''
-            params = []
-            
-            if source_file_filter:
-                query += ' WHERE source_file = ?'
-                params.append(source_file_filter)
-            
-            query += ' ORDER BY source_file, page_number, created_at'
-            
-            df = pd.read_sql_query(query, self.db_connection, params=params)
-            df.to_csv(output_path, index=False)
-            
-            logger.info(f"Exported {len(df)} OCR results to {output_path}")
-            
-        except Exception as e:
-            logger.error(f"Error exporting OCR results to CSV: {e}")
-            raise
+            logger.error(f"Error storing Tesseract OCR results: {e}")
 
 
-# Utility functions for standalone usage
-
-def process_directory_with_pdf_ocr(
-    directory_path: str, 
-    db_manager: Optional[DatabaseManager] = None,
-    language: str = 'en',
-    confidence_threshold: float = 0.7
-) -> Dict[str, int]:
-    """
-    Process all PDF files in a directory with OCR.
-    
-    Args:
-        directory_path: Directory containing PDF files
-        db_manager: Optional database manager
-        language: Language for OCR
-        confidence_threshold: Minimum confidence threshold
-        
-    Returns:
-        Dictionary mapping file paths to text region counts
-    """
-    if not db_manager:
-        db_manager = DatabaseManager("pdf_ocr_results.db")
-    
-    results = {}
-    
-    try:
-        with db_manager.get_connection() as conn:
-            ocr_engine = PDFOCREngine(
-                db_connection=conn,
-                language=language,
-                confidence_threshold=confidence_threshold
-            )
-            
-            if not ocr_engine.is_available():
-                logger.error("PDF OCR engine not available - check EasyOCR and pdf2image installation")
-                return results
-            
-            logger.info(f"Processing directory with PDF OCR: {directory_path}")
-            
-            # Process PDF files
-            for root, _, files in os.walk(directory_path):
-                for file_name in files:
-                    if file_name.lower().endswith('.pdf'):
-                        file_path = os.path.join(root, file_name)
-                        
-                        logger.info(f"Processing: {file_name}")
-                        
-                        result = ocr_engine.process_file(file_path)
-                        
-                        if result.success:
-                            text_count = len(result.ocr_results)
-                            results[file_path] = text_count
-                            logger.info(f"   ✓ Extracted {text_count} text regions")
-                        else:
-                            logger.error(f"   ✗ Failed: {result.error_message}")
-                            results[file_path] = 0
-            
-        logger.info(f"PDF OCR processing complete: {sum(results.values())} total text regions")
-        
-    except Exception as e:
-        logger.error(f"Error in process_directory_with_pdf_ocr: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-    
-    return results
-
-
+# Test function
 if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python pdf_ocr_engine.py <directory_or_file_path> [--language en] [--confidence 0.7]")
-        print("  directory_or_file_path: Directory or PDF file to process")
-        print("  --language: OCR language (default: en)")
-        print("  --confidence: Minimum confidence threshold (default: 0.7)")
+        print("Usage: python tesseract_ocr_engine.py <pdf_file>")
         sys.exit(1)
     
-    target_path = sys.argv[1]
-    language = 'en'
-    confidence = 0.7
+    pdf_file = sys.argv[1]
     
-    # Parse optional arguments
-    for i, arg in enumerate(sys.argv[2:], 2):
-        if arg == '--language' and i + 1 < len(sys.argv):
-            language = sys.argv[i + 1]
-        elif arg == '--confidence' and i + 1 < len(sys.argv):
-            confidence = float(sys.argv[i + 1])
+    print("Testing Tesseract OCR Engine")
+    print("=" * 40)
     
-    if os.path.isdir(target_path):
-        print("PDF OCR Processing Directory")
-        print("=" * 40)
+    engine = TesseractOCREngine()
+    
+    print(f"Engine available: {engine.is_available()}")
+    print(f"Can process {pdf_file}: {engine.can_process(pdf_file)}")
+    
+    if engine.is_available() and engine.can_process(pdf_file):
+        print(f"\nProcessing {pdf_file}...")
+        result = engine.process_file(pdf_file)
         
-        results = process_directory_with_pdf_ocr(target_path, language=language, confidence_threshold=confidence)
-        
-        total_regions = sum(results.values())
-        processed_files = len([count for count in results.values() if count > 0])
-        
-        print(f"\nPDF OCR processing complete!")
-        print(f"   Files processed: {len(results)}")
-        print(f"   Files with text: {processed_files}")
-        print(f"   Total text regions: {total_regions}")
-        
-        if total_regions > 0:
-            print(f"\nResults by file:")
-            for file_path, count in results.items():
-                if count > 0:
-                    file_name = os.path.basename(file_path)
-                    print(f"   {file_name}: {count} text regions")
+        print(f"Success: {result.success}")
+        if result.success:
+            print(f"Text regions found: {len(result.ocr_results)}")
+            print(f"Processing time: {result.processing_time_ms}ms")
             
-            # Export to CSV
-            output_csv = os.path.join(target_path, "pdf_ocr_results.csv")
-            try:
-                db_manager = DatabaseManager("pdf_ocr_results.db")
-                with db_manager.get_connection() as conn:
-                    ocr_engine = PDFOCREngine(conn)
-                    ocr_engine.export_ocr_results_to_csv(output_csv)
-                    print(f"\nPDF OCR results exported to: {output_csv}")
-            except Exception as e:
-                print(f"Could not export CSV: {e}")
-        
+            if result.ocr_results:
+                print("\nFirst few text regions:")
+                for i, ocr_result in enumerate(result.ocr_results[:5]):
+                    print(f"  {i+1}. '{ocr_result.text}' (confidence: {ocr_result.confidence:.2f})")
+        else:
+            print(f"Error: {result.error_message}")
     else:
-        print("Single PDF file processing not yet implemented")
-        print("Use directory processing instead")
+        print("Cannot process file or engine not available")

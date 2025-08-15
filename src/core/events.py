@@ -34,6 +34,7 @@ class EventType(Enum):
     OCR_COMPLETED = "ocr_completed"
     HIGHLIGHTS_EXTRACTED = "highlights_extracted"  # New event for highlight extraction
     TODOS_DETECTED = "todos_detected"
+    TEXT_EXTRACTION_COMPLETED = "text_extraction_completed"
     
     # Integration events
     NOTION_SYNC_STARTED = "notion_sync_started"
@@ -134,6 +135,11 @@ class EventBus:
             
         except Exception as e:
             logger.error(f"Error publishing event {event.event_type.value}: {e}")
+    
+    def emit(self, event_type: EventType, data: Dict[str, Any] = None, 
+             source: str = None, correlation_id: str = None) -> None:
+        """Emit an event (alias for publish_event)."""
+        self.publish_event(event_type, data, source, correlation_id)
     
     def publish_event(self, event_type: EventType, data: Dict[str, Any] = None, 
                      source: str = None, correlation_id: str = None) -> None:

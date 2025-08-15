@@ -31,6 +31,10 @@ from src.processors.enhanced_highlight_extractor import (
 )
 from src.processors.ocr_engine import OCREngine, process_directory_with_ocr
 from src.processors.pdf_ocr_engine import PDFOCREngine, process_directory_with_pdf_ocr
+from src.processors.notebook_text_extractor import (
+    NotebookTextExtractor,
+    extract_text_from_directory
+)
 
 
 # Configure logging
@@ -280,8 +284,9 @@ def process(ctx):
 @click.option('--enhanced', is_flag=True, help='Use enhanced extraction with EPUB matching')
 @click.option('--export', help='Export results to CSV file')
 @click.option('--compare', is_flag=True, help='Compare basic vs enhanced extraction')
+@click.option('--text-extraction', is_flag=True, help='Extract text from notebooks using OCR')
 @click.pass_context
-def process_directory(ctx, directory: str, enhanced: bool, export: Optional[str], compare: bool):
+def process_directory(ctx, directory: str, enhanced: bool, export: Optional[str], compare: bool, text_extraction: bool):
     """Process all files in a directory."""
     
     if not os.path.exists(directory):
@@ -298,6 +303,19 @@ def process_directory(ctx, directory: str, enhanced: bool, export: Optional[str]
             click.echo("Comparing extraction methods...")
             results = compare_extraction_methods(directory)
             _display_comparison_results(results)
+        elif text_extraction:
+            click.echo("Extracting text from notebooks using OCR...")
+            db_path = config_obj.get('database.path')
+            language = config_obj.get('ocr.language', 'en')
+            confidence = config_obj.get('ocr.confidence_threshold', 0.7)
+            
+            results = extract_text_from_directory(
+                directory, 
+                db_path=db_path,
+                language=language,
+                confidence_threshold=confidence
+            )
+            _display_text_extraction_results(results)
         elif enhanced:
             click.echo("Processing with enhanced extraction...")
             results = process_directory_enhanced(directory, db_manager)
@@ -341,6 +359,26 @@ def _display_processing_results(results: dict, item_type: str):
             if count > 0:
                 file_name = os.path.basename(file_path)
                 click.echo(f"  {file_name}: {count} {item_type}")
+
+
+def _display_text_extraction_results(results: dict):
+    """Display text extraction results."""
+    successful = len([r for r in results.values() if r.success])
+    total_regions = sum(r.total_text_regions for r in results.values())
+    
+    click.echo(f"\nText Extraction Results:")
+    click.echo(f"  Total notebooks: {len(results)}")
+    click.echo(f"  Successfully processed: {successful}")
+    click.echo(f"  Total text regions: {total_regions}")
+    
+    success_rate = (successful / len(results)) * 100 if results else 0
+    click.echo(f"  Success rate: {success_rate:.1f}%")
+    
+    if successful > 0:
+        click.echo(f"\nResults by notebook:")
+        for result in results.values():
+            if result.success:
+                click.echo(f"  {result.notebook_name}: {result.total_text_regions} text regions")
 
 
 def _display_comparison_results(results: dict):
@@ -497,6 +535,98 @@ def ocr_directory(ctx, directory: str, language: str, confidence: float, export:
     except Exception as e:
         click.echo(f"OCR processing failed: {e}", err=True)
         logging.exception("OCR processing error")
+        sys.exit(1)
+
+
+# Text Extraction Commands
+@cli.group()
+def text():
+    """Text extraction commands."""
+    pass
+
+
+@text.command('extract')
+@click.argument('directory')
+@click.option('--output-dir', help='Directory to save individual text files')
+@click.option('--language', default='en', help='OCR language (default: en)')
+@click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
+@click.option('--format', 'output_format', type=click.Choice(['txt', 'md', 'json', 'csv']), default='md', help='Output format (default: md for Markdown)')
+@click.pass_context
+def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, confidence: float, output_format: str):
+    """Extract text from notebooks using OCR."""
+    
+    if not os.path.exists(directory):
+        click.echo(f"Directory not found: {directory}", err=True)
+        sys.exit(1)
+    
+    config_obj = ctx.obj['config']
+    db_path = config_obj.get('database.path')
+    
+    try:
+        click.echo("🚀 Extracting text from notebooks...")
+        click.echo(f"📂 Input: {directory}")
+        if output_dir:
+            click.echo(f"📁 Output: {output_dir}")
+        click.echo(f"🌐 Language: {language}")
+        click.echo(f"📊 Confidence: {confidence}")
+        click.echo()
+        
+        results = extract_text_from_directory(
+            directory,
+            output_dir=output_dir,
+            db_path=db_path,
+            language=language,
+            confidence_threshold=confidence,
+            output_format=output_format
+        )
+        
+        _display_text_extraction_results(results)
+        
+        # Export summary if output directory specified
+        if output_dir and results:
+            summary_file = Path(output_dir) / f"extraction_summary.{output_format}"
+            
+            if output_format == 'json':
+                import json
+                summary_data = {
+                    'total_notebooks': len(results),
+                    'successful': len([r for r in results.values() if r.success]),
+                    'total_text_regions': sum(r.total_text_regions for r in results.values()),
+                    'notebooks': {
+                        uuid: {
+                            'name': result.notebook_name,
+                            'success': result.success,
+                            'text_regions': result.total_text_regions,
+                            'processing_time_ms': result.processing_time_ms,
+                            'error': result.error_message if not result.success else None
+                        } for uuid, result in results.items()
+                    }
+                }
+                with open(summary_file, 'w') as f:
+                    json.dump(summary_data, f, indent=2)
+            
+            elif output_format == 'csv':
+                import pandas as pd
+                summary_rows = []
+                for uuid, result in results.items():
+                    summary_rows.append({
+                        'notebook_uuid': uuid,
+                        'notebook_name': result.notebook_name,
+                        'success': result.success,
+                        'text_regions': result.total_text_regions,
+                        'processing_time_ms': result.processing_time_ms,
+                        'error_message': result.error_message if not result.success else ''
+                    })
+                df = pd.DataFrame(summary_rows)
+                df.to_csv(summary_file, index=False)
+            
+            click.echo(f"\n📋 Summary saved to: {summary_file}")
+        
+        click.echo("\n🎉 Text extraction completed!")
+        
+    except Exception as e:
+        click.echo(f"Text extraction failed: {e}", err=True)
+        logging.exception("Text extraction error")
         sys.exit(1)
 
 

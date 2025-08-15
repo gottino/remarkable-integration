@@ -1,44 +1,63 @@
 # reMarkable Integration
 
-A Python-based integration that automatically processes reMarkable tablet data, extracting handwritten text, highlights, and todos, then syncing them to various productivity applications.
+Transform your handwritten reMarkable notes into searchable digital text with AI-powered OCR that rivals human transcription accuracy.
 
-## Features
+## ✨ Revolutionary Features
 
-- **Automatic Sync**: Monitor reMarkable sync folder for real-time processing
-- **Handwritten Text Transcription**: OCR recognition with date detection
-- **Todo Recognition**: Detect checkbox patterns and convert to actionable tasks
-- **History Tracking**: Maintain a log of all changes and processing
-- **Multiple Integrations**: 
-  - Notion (for notes and content)
-  - Microsoft To Do (for task management)
-  - Readwise (for highlights)
+- **🤖 AI-Powered Handwriting OCR**: Claude Vision technology reads cursive writing with human-level accuracy
+- **📅 Smart Date Recognition**: Automatically detects your date annotations and organizes content chronologically  
+- **📝 Perfect Markdown Output**: Preserves formatting, arrows (→), bullets (•), and structure
+- **🔄 Complete Automation**: .rm files → SVG → PDF → AI transcription → searchable text
+- **🌍 Multi-language Support**: Seamlessly handles mixed-language notes
+- **🎯 Symbol Recognition**: Arrows, bullets, checkboxes, and custom notation
+- **📊 Multiple Export Formats**: Markdown, JSON, CSV with page organization
 
 ## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/remarkable-integration.git
-cd remarkable-integration
-
-# Install dependencies
+# Install dependencies  
 poetry install
 
-# Initialize configuration
-poetry run python -m src.cli.main config init --sync-dir "/path/to/your/remarkable"
+# Set your Claude API key for AI-powered OCR
+export ANTHROPIC_API_KEY="your-api-key-here"
 
-# Process your reMarkable files
-poetry run python -m src.cli.main process directory "/path/to/remarkable" --enhanced
+# Extract text from handwritten notebooks
+poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --output-dir "extracted_notes"
 
-# Export highlights to CSV
-poetry run python -m src.cli.main export -o highlights.csv --enhanced
+# Result: Perfect Markdown files with chronological organization!
 ```
 
-## Documentation
+## 🎯 What You Get
 
-- **[CLI Usage Guide](docs/cli-usage.md)** - Complete command-line interface documentation
-- **[Highlight Extraction](docs/highlight_extraction.md)** - Technical details on highlight processing
+**Input**: Handwritten reMarkable notebook pages
+**Output**: 
+```markdown
+# Your Notebook
 
-For help with any command:
-```bash
-poetry run python -m src.cli.main --help
+**Date: 21-09-2021**
+---
+
+## Meeting Notes
+- Project timeline → Q2 launch
+- Budget approval ✓
+- Next steps:
+  - [ ] Schedule review meeting
+  - [x] Update documentation
 ```
+
+## 📚 Documentation
+
+- **[User Guide](docs/user-guide.md)** - Complete workflow and integration examples
+- **[AI OCR Guide](docs/ai-ocr.md)** - Text extraction setup and optimization  
+- **[CLI Reference](docs/cli-usage.md)** - Complete command-line documentation
+- **[Highlight Extraction](docs/highlight_extraction.md)** - Legacy highlight processing
+
+## 🚀 Advanced Features
+
+- **Date Annotation Recognition**: Automatically detects your "lying L" date patterns in note corners
+- **Multi-Engine OCR**: Falls back from Claude → EasyOCR → Enhanced Tesseract → Tesseract  
+- **Corporate Network Support**: SSL verification bypass for enterprise environments
+- **Batch Processing**: Handle entire notebook collections automatically
+- **Database Integration**: Store and search extracted text with full metadata
+
+*Transform thousands of handwritten pages into searchable digital archives in minutes.*

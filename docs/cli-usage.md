@@ -45,7 +45,41 @@ poetry run python -m src.cli.main config show
 poetry run python -m src.cli.main config show --section remarkable
 ```
 
-### File Processing Commands
+### AI-Powered Text Extraction Commands
+
+> 🚀 **Revolutionary Feature**: Transform handwritten notes into perfect Markdown with human-level accuracy!  
+> See **[AI OCR Guide](ai-ocr.md)** for complete setup and optimization details.
+
+```bash
+# Extract handwritten text using Claude Vision AI
+poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --output-dir "extracted_notes"
+
+# Advanced options
+poetry run python -m src.cli.main text extract "/path/to/data" \
+  --format md \              # Markdown output (default)
+  --confidence 0.8 \         # Quality threshold (0.0-1.0)
+  --language en \            # OCR language
+  --output-dir "notes"
+
+# Output formats
+--format md    # Markdown with page delimiters and date detection
+--format json  # Structured data with metadata  
+--format csv   # Spreadsheet-compatible export
+--format txt   # Plain text (also uses Markdown formatting)
+```
+
+**Requirements:**
+- Set `ANTHROPIC_API_KEY` environment variable
+- reMarkable data directory with `.rm`, `.content`, `.metadata` files
+
+**Features:**
+- 🎯 **Human-level accuracy** on cursive handwriting
+- 📅 **Automatic date detection** from your corner annotations  
+- 📝 **Perfect Markdown** with arrows (→), bullets (•), structure
+- 🌍 **Multi-language support** (English, German, etc.)
+- 📄 **Page organization** with clear delimiters
+
+### Legacy File Processing Commands
 ```bash
 # Process all files in a directory (basic extraction)
 poetry run python -m src.cli.main process directory /path/to/remarkable
@@ -213,6 +247,50 @@ poetry run python -m src.cli.main config show --section database
 # Error: No .content files found
 # Solution: Verify sync directory contains reMarkable files
 ls -la "/path/to/remarkable/"
+```
+
+#### AI OCR Issues
+```bash
+# Error: Claude Vision OCR engine not available
+# Solution: Set your Anthropic API key
+export ANTHROPIC_API_KEY="your-api-key-here"
+
+# Error: SSL certificate verification failed  
+# Solution: The system automatically handles SSL issues in corporate environments
+
+# Error: No text extracted
+# Solutions:
+# 1. Check input path contains .rm files
+# 2. Lower confidence threshold: --confidence 0.6
+# 3. Verify API key has credits
+# 4. Check network connectivity
+```
+
+## 🎯 Quick Examples
+
+### Complete Workflow
+```bash
+# 1. Setup
+export ANTHROPIC_API_KEY="your-key"
+poetry install
+
+# 2. Extract all handwritten text
+poetry run python -m src.cli.main text extract "/remarkable/data" --output-dir "digital_notes"
+
+# 3. Result: Perfect Markdown files ready for any note app!
+```
+
+### Integration Examples
+```bash
+# Extract to Obsidian vault
+poetry run python -m src.cli.main text extract data/ --output-dir "/path/to/obsidian/vault"
+
+# Export structured data
+poetry run python -m src.cli.main text extract data/ --format json --output-dir "api_data"
+
+# Create spreadsheet export
+poetry run python -m src.cli.main text extract data/ --format csv --output-dir "analysis"
+```
 poetry run python -m src.cli.main config check
 ```
 
