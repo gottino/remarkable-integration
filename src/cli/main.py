@@ -21,6 +21,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils.config import Config
+from src.utils.api_keys import get_api_key_manager
 from src.core.database import DatabaseManager
 from src.core.events import setup_default_handlers, get_event_bus, EventType
 from src.processors.highlight_extractor import HighlightExtractor, process_directory
@@ -182,6 +183,101 @@ def config_show(ctx, section: Optional[str]):
         click.echo(f"Configuration loaded from: {config_obj.config_path or 'defaults'}")
         click.echo("\nFull configuration:")
         _print_config_section(config_obj.config_data)
+
+
+@config.group('api-key')
+def api_key():
+    """API key management commands."""
+    pass
+
+
+@api_key.command('set')
+@click.option('--method', type=click.Choice(['auto', 'keychain', 'encrypted']), 
+              default='auto', help='Storage method (default: auto)')
+@click.option('--key', help='API key (will prompt securely if not provided)')
+def api_key_set(method: str, key: Optional[str]):
+    """Set Anthropic API key for AI-powered OCR."""
+    
+    api_manager = get_api_key_manager()
+    
+    if not key:
+        import getpass
+        click.echo("🔑 Setting up Anthropic API key for AI-powered OCR")
+        click.echo("Get your API key from: https://console.anthropic.com/")
+        click.echo()
+        
+        try:
+            key = getpass.getpass("Enter your API key (input hidden): ").strip()
+        except KeyboardInterrupt:
+            click.echo("\nCancelled.")
+            sys.exit(0)
+        
+        if not key:
+            click.echo("No API key provided.", err=True)
+            sys.exit(1)
+    
+    # Basic validation
+    if not key.startswith('sk-ant-'):
+        click.echo("⚠️  Warning: Anthropic API keys usually start with 'sk-ant-'")
+        if not click.confirm("Continue anyway?"):
+            sys.exit(0)
+    
+    # Store the key
+    if api_manager.store_anthropic_api_key(key, method):
+        click.echo(f"✅ API key stored successfully using {method} method")
+        click.echo("You can now use AI-powered OCR commands!")
+    else:
+        click.echo("❌ Failed to store API key", err=True)
+        sys.exit(1)
+
+
+@api_key.command('get')
+def api_key_get():
+    """Check if Anthropic API key is available."""
+    
+    api_manager = get_api_key_manager()
+    api_key = api_manager.get_anthropic_api_key()
+    
+    if api_key:
+        click.echo(f"✅ API key found: {api_key[:12]}...")
+        
+        # Show storage location
+        keys = api_manager.list_stored_keys()
+        if 'anthropic' in keys:
+            location = keys['anthropic']
+            click.echo(f"📍 Storage location: {location}")
+    else:
+        click.echo("❌ No API key found")
+        click.echo("Use 'config api-key set' to configure your API key")
+
+
+@api_key.command('remove')
+@click.confirmation_option(prompt='Are you sure you want to remove the stored API key?')
+def api_key_remove():
+    """Remove stored Anthropic API key."""
+    
+    api_manager = get_api_key_manager()
+    
+    if api_manager.remove_anthropic_api_key():
+        click.echo("✅ API key removed successfully")
+    else:
+        click.echo("ℹ️  No API key was stored")
+
+
+@api_key.command('list')
+def api_key_list():
+    """List all stored API keys and their locations."""
+    
+    api_manager = get_api_key_manager()
+    keys = api_manager.list_stored_keys()
+    
+    if keys:
+        click.echo("📋 Stored API keys:")
+        for service, location in keys.items():
+            click.echo(f"  🔑 {service}: {location}")
+    else:
+        click.echo("ℹ️  No API keys stored")
+        click.echo("Use 'config api-key set' to add an API key")
 
 
 def _print_config_section(data, indent=0):

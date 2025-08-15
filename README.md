@@ -18,8 +18,8 @@ Transform your handwritten reMarkable notes into searchable digital text with AI
 # Install dependencies  
 poetry install
 
-# Set your Claude API key for AI-powered OCR
-export ANTHROPIC_API_KEY="your-api-key-here"
+# Set up your Claude API key securely
+poetry run python -m src.cli.main config api-key set
 
 # Extract text from handwritten notebooks
 poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --output-dir "extracted_notes"
@@ -56,6 +56,7 @@ poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --outp
 
 - **Date Annotation Recognition**: Automatically detects your "lying L" date patterns in note corners
 - **Multi-Engine OCR**: Falls back from Claude → EasyOCR → Enhanced Tesseract → Tesseract  
+- **Secure API Key Management**: Encrypted storage with keychain integration
 - **Corporate Network Support**: SSL verification bypass for enterprise environments
 - **Batch Processing**: Handle entire notebook collections automatically
 - **Database Integration**: Store and search extracted text with full metadata

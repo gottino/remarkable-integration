@@ -45,6 +45,26 @@ poetry run python -m src.cli.main config show
 poetry run python -m src.cli.main config show --section remarkable
 ```
 
+### API Key Management Commands
+```bash
+# Set up API key securely (interactive)
+poetry run python -m src.cli.main config api-key set
+
+# Set API key with specific storage method
+poetry run python -m src.cli.main config api-key set --method keychain
+poetry run python -m src.cli.main config api-key set --method encrypted
+poetry run python -m src.cli.main config api-key set --method auto
+
+# Check API key status  
+poetry run python -m src.cli.main config api-key get
+
+# List all stored API keys
+poetry run python -m src.cli.main config api-key list
+
+# Remove stored API key
+poetry run python -m src.cli.main config api-key remove
+```
+
 ### AI-Powered Text Extraction Commands
 
 > 🚀 **Revolutionary Feature**: Transform handwritten notes into perfect Markdown with human-level accuracy!  

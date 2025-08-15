@@ -44,6 +44,9 @@ from .tesseract_ocr_engine import BoundingBox, OCRResult, ProcessingResult
 from ..core.events import get_event_bus, EventType
 from ..core.database import DatabaseManager
 
+# API key management
+from ..utils.api_keys import get_anthropic_api_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +78,8 @@ class ClaudeVisionOCREngine:
         self.client = None
         if ANTHROPIC_AVAILABLE:
             try:
-                api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
+                # Use API key manager to get key from secure storage
+                api_key = api_key or get_anthropic_api_key()
                 if api_key:
                     # Try with custom httpx client that handles SSL issues
                     import httpx
@@ -92,7 +96,7 @@ class ClaudeVisionOCREngine:
                     )
                     logger.info(f"Claude Vision OCR initialized with model: {model} (SSL verification disabled)")
                 else:
-                    logger.error("No Anthropic API key found. Set ANTHROPIC_API_KEY environment variable.")
+                    logger.error("No Anthropic API key found. Use 'config api-key set' to configure your API key.")
             except Exception as e:
                 logger.error(f"Failed to initialize Claude client: {e}")
                 # Fallback: try without custom client

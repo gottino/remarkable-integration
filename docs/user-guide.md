@@ -58,13 +58,22 @@ poetry install
 ### 3. Setup API Access
 
 ```bash
-# Get your API key from https://console.anthropic.com/
-export ANTHROPIC_API_KEY="your-api-key-here"
+# Secure API key setup with interactive prompt
+poetry run python -m src.cli.main config api-key set
 
-# Make it permanent (optional)
-echo 'export ANTHROPIC_API_KEY="your-key"' >> ~/.zshrc
-source ~/.zshrc
+# Or set directly with preferred storage method
+poetry run python -m src.cli.main config api-key set --method keychain --key "your-api-key"
+
+# Verify setup
+poetry run python -m src.cli.main config api-key get
 ```
+
+The system securely stores your API key using:
+- **Keychain** (macOS/Windows) or **Secret Service** (Linux) - Recommended
+- **Encrypted file** with machine-specific encryption  
+- **Environment variables** (fallback)
+
+No more API keys in command history or config files! 🔒
 
 ### 4. Extract Your Notes
 
