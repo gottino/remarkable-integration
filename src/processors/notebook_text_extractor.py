@@ -27,7 +27,7 @@ from .pdf_ocr_engine import PDFOCREngine, OCRResult, ProcessingResult
 from .tesseract_ocr_engine import TesseractOCREngine
 from .enhanced_tesseract_ocr import EnhancedTesseractOCREngine
 from .claude_vision_ocr import ClaudeVisionOCREngine
-from ..core.rm2svg import RmToSvgConverter
+from ..core.rm_parser import RemarkableParser
 from ..core.database import DatabaseManager
 from ..core.events import get_event_bus, EventType
 
@@ -115,31 +115,48 @@ class NotebookTextResult:
         return page_texts
     
     def extract_todos(self) -> List[TodoItem]:
-        """Extract todo items from OCR results."""
+        """Extract todo items from Claude Vision processed text."""
         import re
         
         todos = []
         
         for page in self.pages:
-            # Extract date from page (if available)
-            page_date = self._extract_date_from_page(page)
-            
+            # Get the full text for this page (Claude Vision gives us nicely formatted text)
+            page_text = ""
             for ocr_result in page.ocr_results:
-                text = ocr_result.text.strip()
+                page_text += ocr_result.text + "\n"
+            
+            if not page_text.strip():
+                continue
                 
-                # Look for checkbox patterns
+            # Extract date from page text (Claude Vision often includes it)
+            page_date = self._extract_date_from_text(page_text)
+            
+            # Split into lines and look for todo patterns
+            lines = page_text.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Look for checkbox patterns in the formatted text
                 todo_patterns = [
-                    # Checked boxes
-                    (r'[\-\*]?\s*[\[\(]?[x✓✔☑]\s*[\]\)]?\s*(.+)', True),
-                    # Unchecked boxes  
-                    (r'[\-\*]?\s*[\[\(]?[\s☐□]\s*[\]\)]?\s*(.+)', False),
-                    # Simple dash/bullet todos
-                    (r'[\-\*]\s*\[\s*\]\s*(.+)', False),
-                    (r'[\-\*]\s*\[[x✓]\]\s*(.+)', True),
+                    # Markdown-style checkboxes (what Claude Vision outputs)
+                    (r'^\s*-\s*\[\s*\]\s*(.+)', False),  # - [ ] task
+                    (r'^\s*-\s*\[x\]\s*(.+)', True),     # - [x] task
+                    (r'^\s*-\s*\[X\]\s*(.+)', True),     # - [X] task
+                    (r'^\s*-\s*\[✓\]\s*(.+)', True),     # - [✓] task
+                    (r'^\s*-\s*\[☑\]\s*(.+)', True),     # - [☑] task
+                    # Unicode checkbox symbols
+                    (r'^\s*-?\s*☐\s*(.+)', False),       # ☐ task
+                    (r'^\s*-?\s*☑\s*(.+)', True),        # ☑ task
+                    (r'^\s*-?\s*✓\s*(.+)', True),        # ✓ task
+                    (r'^\s*-?\s*□\s*(.+)', False),       # □ task
                 ]
                 
                 for pattern, completed in todo_patterns:
-                    match = re.match(pattern, text, re.IGNORECASE)
+                    match = re.match(pattern, line, re.IGNORECASE)
                     if match:
                         todo_text = match.group(1).strip()
                         if todo_text and len(todo_text) > 2:  # Filter out very short matches
@@ -150,10 +167,10 @@ class NotebookTextResult:
                                 notebook_uuid=self.notebook_uuid,
                                 page_number=page.page_number,
                                 date_extracted=page_date,
-                                confidence=ocr_result.confidence
+                                confidence=1.0  # High confidence since Claude Vision processed it well
                             )
                             todos.append(todo)
-                        break  # Don't match multiple patterns for same text
+                        break  # Don't match multiple patterns for same line
         
         return todos
     
@@ -184,6 +201,37 @@ class NotebookTextResult:
                     return date_str
         
         return None
+    
+    def _extract_date_from_text(self, text: str) -> Optional[str]:
+        """Extract date from Claude Vision processed text."""
+        import re
+        
+        # Look for date patterns in the text (Claude Vision often formats dates nicely)
+        date_patterns = [
+            r'\*\*Date:\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\*\*',  # **Date: dd-mm-yyyy**
+            r'Date:\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})',          # Date: dd-mm-yyyy
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*[┘\]\)┐]?',  # bracketed dates
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2})\s*[┘\]\)┐]?'   # 2-digit year
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, text)
+            if match:
+                date_str = match.group(1)
+                # Normalize date format to dd-mm-yyyy
+                if '-' in date_str and len(date_str.split('-')[2]) == 2:  # 2-digit year
+                    parts = date_str.split('-')
+                    if len(parts) == 3:
+                        date_str = f"{parts[0]}-{parts[1]}-20{parts[2]}"
+                elif '/' in date_str and len(date_str.split('/')[2]) == 2:  # 2-digit year with /
+                    parts = date_str.split('/')
+                    if len(parts) == 3:
+                        date_str = f"{parts[0]}-{parts[1]}-20{parts[2]}"
+                    else:
+                        date_str = date_str.replace('/', '-')  # normalize to -
+                return date_str
+        
+        return None
 
 
 class NotebookTextExtractor:
@@ -211,7 +259,8 @@ class NotebookTextExtractor:
         self.temp_dir = temp_dir or tempfile.gettempdir()
         
         # Initialize components
-        self.rm_converter = RmToSvgConverter()
+        # Note: rm_parser will be initialized per directory in process_directory()
+        self.rm_parser = None
         
         # OCR Engine Priority:
         # 1. Claude Vision (best for handwriting)
@@ -443,9 +492,16 @@ class NotebookTextExtractor:
     ) -> Optional[NotebookPage]:
         """Process a single page: .rm → SVG → PDF → OCR."""
         try:
-            # Convert .rm to SVG
+            # Convert .rm to SVG using rm_parser (supports both v5 and v6)
             svg_file = temp_dir / f"page_{page_number:03d}.svg"
-            self.rm_converter.convert_file(str(rm_file), str(svg_file))
+            # Extract notebook UUID and page UUID from file path
+            # rm_file should be like: /path/uuid/page_uuid.rm
+            notebook_uuid = rm_file.parent.name
+            page_uuid_from_file = rm_file.stem
+            
+            page_info = self.rm_parser.convert_page_to_svg(
+                notebook_uuid, page_uuid_from_file, str(svg_file)
+            )
             
             if not svg_file.exists():
                 logger.error(f"Failed to create SVG for page {page_number}")
@@ -586,6 +642,9 @@ class NotebookTextExtractor:
         results = {}
         
         logger.info(f"Processing directory with text extraction: {directory_path}")
+        
+        # Initialize rm_parser with the directory path for v6 support
+        self.rm_parser = RemarkableParser(directory_path, debug=False)
         
         # Find all notebooks
         notebooks = self.find_notebooks(directory_path)

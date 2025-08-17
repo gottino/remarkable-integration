@@ -440,11 +440,11 @@ description = "Cross-platform colored terminal text."
 optional = false
 python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 groups = ["main", "dev"]
+markers = "platform_system == \"Windows\" or sys_platform == \"win32\""
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
 ]
-markers = {main = "sys_platform == \"win32\" or platform_system == \"Windows\"", dev = "platform_system == \"Windows\" or sys_platform == \"win32\""}
 
 [[package]]
 name = "coverage"
@@ -2942,19 +2942,43 @@ socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
 
 [[package]]
-name = "rmscene"
-version = "0.4.0"
-description = "Read v6 .rm files from the reMarkable tablet"
+name = "rmc"
+version = "0.3.1-dev"
+description = "Convert to/from v6 .rm files from the reMarkable tablet"
 optional = false
-python-versions = ">=3.10,<4.0"
+python-versions = "^3.10"
 groups = ["main"]
-files = [
-    {file = "rmscene-0.4.0-py3-none-any.whl", hash = "sha256:d821de053939e0d20eeb99315ea05b5a547e6780f088a6f14b82ea4444c97692"},
-    {file = "rmscene-0.4.0.tar.gz", hash = "sha256:ec37150a2c0d601c8f3f4e694d06872a5bbb413c6646e806ecdf4b28ba7ca10f"},
-]
+files = []
+develop = false
 
 [package.dependencies]
-packaging = ">=23.0,<24.0"
+click = "^8.0"
+rmscene = ">=0.6.0, <0.7.0"
+
+[package.source]
+type = "git"
+url = "https://github.com/ricklupton/rmc.git"
+reference = "HEAD"
+resolved_reference = "275110aac6b2e353151878956011304bae8a8915"
+
+[[package]]
+name = "rmscene"
+version = "0.7.0"
+description = "Read v6 .rm files from the reMarkable tablet"
+optional = false
+python-versions = "^3.10"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+packaging = "^23.0"
+
+[package.source]
+type = "git"
+url = "https://github.com/ricklupton/rmscene.git"
+reference = "v0.7.0"
+resolved_reference = "ac2eeef1796092bf14a21891fade06f0e6e22a16"
 
 [[package]]
 name = "scikit-image"
@@ -3922,4 +3946,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "3e7f53ecb5e3d32f199315aeca96443d4b61943f6d74e20c709f7fd07ba8918a"
+content-hash = "50956b4e9618682223dc5d3edfbfd4c53b02a416663a080b9aa8c8f7f97976b5"

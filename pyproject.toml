@@ -14,7 +14,8 @@ packages = [{include = "remarkable_integration", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-rmscene = "^0.4.0"
+rmscene = {git = "https://github.com/ricklupton/rmscene.git", tag = "v0.7.0"}
+rmc = {git = "https://github.com/ricklupton/rmc.git"}
 watchdog = "^2.1.0"
 sqlalchemy = "^2.0.0"
 pydantic = "^1.8.0"

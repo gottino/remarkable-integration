@@ -18,11 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    import rmscene.rm2svg as rm2svgv6
+    import rmc
+    import rmscene
     VERSION_6_SUPPORT = True
 except ImportError:
     VERSION_6_SUPPORT = False
-    print("Warning: rmscene not available, v6 support disabled")
+    print("Warning: rmscene/rmc not available, v6 support disabled")
 
 try:
     import PyPDF2
@@ -239,13 +240,14 @@ class RemarkableParser:
                 version = head[-1] if head[:-1] == head_fmt[:-1] else None
             
             if version == '6' and VERSION_6_SUPPORT:
-                # Use rmscene for v6
-                page_info = rm2svgv6.rm2svg(str(page_path), output_path, True)
+                # Use rmc for v6
+                rmc.rm_to_svg(str(page_path), output_path)
+                # Return default page info for v6 files
                 return PageInfo(
-                    width=page_info.width,
-                    height=page_info.height,
-                    xpos_delta=page_info.xpos_delta,
-                    ypos_delta=page_info.ypos_delta
+                    width=1404,  # Default reMarkable width
+                    height=1872,  # Default reMarkable height
+                    xpos_delta=0.0,
+                    ypos_delta=0.0
                 )
             elif version in ['1', '2', '3', '4', '5'] and PRE_V6_SUPPORT:
                 # Use our refactored rm2svg for pre-v6
