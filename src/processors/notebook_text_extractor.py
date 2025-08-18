@@ -68,6 +68,19 @@ class NotebookPage:
 
 
 @dataclass
+class NotebookAnalysis:
+    """Analysis result for a notebook without processing."""
+    notebook_uuid: str
+    notebook_name: str
+    page_count: int
+    has_pdf_epub: bool
+    file_type: str  # 'notebook', 'pdf', 'epub'
+    estimated_cost: float
+    created_time: Optional[str] = None
+    last_modified: Optional[str] = None
+
+
+@dataclass
 class NotebookTextResult:
     """Result of text extraction from a complete notebook."""
     success: bool
@@ -261,6 +274,8 @@ class NotebookTextExtractor:
         # Initialize components
         # Note: rm_parser will be initialized per directory in process_directory()
         self.rm_parser = None
+        self.filter_pdf_epub = False  # Filter out notebooks with associated PDF/EPUB files
+        self.max_pages = None  # Maximum pages to process per notebook (for testing)
         
         # OCR Engine Priority:
         # 1. Claude Vision (best for handwriting)
@@ -383,20 +398,31 @@ class NotebookTextExtractor:
             with open(content_file, 'r', encoding='utf-8') as f:
                 content = json.load(f)
             
-            # Get page list based on format version
+            # Get page list - try multiple approaches for different .content formats
             page_uuid_list = []
+            
+            # Method 1: formatVersion-specific handling
             if content.get('formatVersion') == 1:
                 page_uuid_list = content.get('pages', [])
             elif content.get('formatVersion') == 2:
                 pages = content.get('cPages', {}).get('pages', [])
                 page_uuid_list = [page['id'] for page in pages if 'deleted' not in page]
+            # Method 2: Fallback - direct pages array (common in many versions including v5)
+            elif 'pages' in content:
+                page_uuid_list = content.get('pages', [])
             else:
-                raise ValueError(f"Unknown format version: {content.get('formatVersion')}")
+                raise ValueError(f"Unknown format version: {content.get('formatVersion')} and no 'pages' array found")
             
             if not page_uuid_list:
                 raise ValueError("No pages found in notebook")
             
             logger.info(f"  Found {len(page_uuid_list)} pages")
+            
+            # Apply page limit if specified
+            if self.max_pages and len(page_uuid_list) > self.max_pages:
+                original_count = len(page_uuid_list)
+                page_uuid_list = page_uuid_list[:self.max_pages]
+                logger.info(f"  Limited to first {len(page_uuid_list)} pages (out of {original_count})")
             
             # Process each page
             processed_pages = []
@@ -465,6 +491,10 @@ class NotebookTextExtractor:
             # Extract todos from the text
             result.todos = result.extract_todos()
             logger.info(f"  ✓ Extracted {len(result.todos)} todo items")
+            
+            # Store todos in database if available
+            if self.db_connection and result.todos:
+                self._store_todos(result.todos)
             
             return result
             
@@ -629,6 +659,35 @@ class NotebookTextExtractor:
         except Exception as e:
             logger.error(f"Error storing notebook results: {e}")
     
+    def _store_todos(self, todos: List[TodoItem]):
+        """Store extracted todos in database."""
+        if not self.db_connection:
+            return
+        
+        try:
+            cursor = self.db_connection.cursor()
+            
+            # Insert todos into the todos table
+            for todo in todos:
+                cursor.execute('''
+                    INSERT INTO todos 
+                    (source_file, title, text, page_number, completed, confidence, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (
+                    f"{todo.notebook_name} ({todo.notebook_uuid})",
+                    todo.text[:100],  # Use first 100 chars as title
+                    todo.text,
+                    str(todo.page_number),
+                    todo.completed,
+                    todo.confidence
+                ))
+            
+            self.db_connection.commit()
+            logger.info(f"Stored {len(todos)} todos in database")
+            
+        except Exception as e:
+            logger.error(f"Error storing todos in database: {e}")
+    
     def process_directory(self, directory_path: str) -> Dict[str, NotebookTextResult]:
         """
         Process all notebooks in a directory and extract text.
@@ -654,6 +713,14 @@ class NotebookTextExtractor:
             return results
         
         logger.info(f"Found {len(notebooks)} notebooks")
+        
+        # Filter notebooks if PDF/EPUB filtering is enabled
+        if self.filter_pdf_epub:
+            original_count = len(notebooks)
+            notebooks = [nb for nb in notebooks if not self._has_associated_pdf_epub(nb['uuid'], directory_path)]
+            filtered_count = original_count - len(notebooks)
+            if filtered_count > 0:
+                logger.info(f"Filtered out {filtered_count} notebooks with associated PDF/EPUB files")
         
         # Process each notebook
         for i, notebook in enumerate(notebooks, 1):
@@ -687,6 +754,143 @@ class NotebookTextExtractor:
         logger.info(f"Text extraction complete: {successful}/{len(results)} notebooks, {total_regions} total text regions")
         
         return results
+    
+    def analyze_directory(self, directory_path: str, cost_per_page: float = 0.003) -> Dict[str, NotebookAnalysis]:
+        """
+        Analyze all notebooks in a directory without processing - dry run for cost estimation.
+        
+        Args:
+            directory_path: Directory containing reMarkable files
+            cost_per_page: Estimated cost per page for Claude Vision OCR (default: $0.003)
+            
+        Returns:
+            Dictionary mapping notebook UUIDs to analysis results
+        """
+        analyses = {}
+        
+        logger.info(f"Analyzing directory (dry-run): {directory_path}")
+        
+        # Find all notebooks
+        notebooks = self.find_notebooks(directory_path)
+        
+        if not notebooks:
+            logger.warning("No notebooks found")
+            return analyses
+        
+        logger.info(f"Found {len(notebooks)} total items")
+        
+        handwriting_notebooks = 0
+        pdf_epub_notebooks = 0
+        total_handwriting_pages = 0
+        
+        for i, notebook_info in enumerate(notebooks, 1):
+            uuid = notebook_info['uuid']
+            doc_name = notebook_info['name']
+            content_file = notebook_info['content_file']
+            
+            logger.debug(f"[{i}/{len(notebooks)}] Analyzing: {doc_name}")
+            
+            try:
+                # Read content file to determine type and page count
+                with open(content_file, 'r', encoding='utf-8') as f:
+                    content = json.load(f)
+                
+                # Get file type
+                file_type = content.get('fileType', 'unknown')
+                
+                # Get page count - try multiple approaches for different .content formats
+                page_count = 0
+                
+                # Method 1: Direct pageCount field (common in many versions)
+                if 'pageCount' in content:
+                    page_count = content.get('pageCount', 0)
+                # Method 2: formatVersion-specific handling
+                elif content.get('formatVersion') == 1:
+                    page_count = len(content.get('pages', []))
+                elif content.get('formatVersion') == 2:
+                    pages = content.get('cPages', {}).get('pages', [])
+                    page_count = len([page for page in pages if 'deleted' not in page])
+                # Method 3: Fallback - count pages array if available
+                elif 'pages' in content:
+                    page_count = len(content.get('pages', []))
+                
+                # Check for associated PDF/EPUB files
+                has_pdf_epub = self._has_associated_pdf_epub(directory_path, uuid)
+                
+                # Read metadata for timestamps
+                metadata_file = Path(directory_path) / f"{uuid}.metadata"
+                created_time = None
+                last_modified = None
+                
+                if metadata_file.exists():
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                        created_time = metadata.get('createdTime')
+                        last_modified = metadata.get('lastModified')
+                
+                # Calculate estimated cost (only for handwriting notebooks)
+                estimated_cost = 0.0
+                if file_type == 'notebook' and not has_pdf_epub and page_count > 0:
+                    estimated_cost = page_count * cost_per_page
+                    handwriting_notebooks += 1
+                    total_handwriting_pages += page_count
+                elif file_type in ['pdf', 'epub'] or has_pdf_epub:
+                    pdf_epub_notebooks += 1
+                
+                analysis = NotebookAnalysis(
+                    notebook_uuid=uuid,
+                    notebook_name=doc_name,
+                    page_count=page_count,
+                    has_pdf_epub=has_pdf_epub,
+                    file_type=file_type,
+                    estimated_cost=estimated_cost,
+                    created_time=created_time,
+                    last_modified=last_modified
+                )
+                
+                analyses[uuid] = analysis
+                
+            except Exception as e:
+                logger.error(f"Error analyzing {doc_name}: {e}")
+                continue
+        
+        # Summary
+        total_estimated_cost = sum(a.estimated_cost for a in analyses.values())
+        
+        logger.info(f"📊 Analysis Summary:")
+        logger.info(f"  Total items: {len(notebooks)}")
+        logger.info(f"  Handwriting notebooks (will be processed): {handwriting_notebooks}")
+        logger.info(f"  PDF/EPUB notebooks (will be skipped): {pdf_epub_notebooks}")
+        logger.info(f"  Total handwriting pages: {total_handwriting_pages}")
+        logger.info(f"  Estimated cost: ${total_estimated_cost:.2f}")
+        
+        return analyses
+    
+    def _has_associated_pdf_epub(self, directory_path: str, uuid: str) -> bool:
+        """Check if a notebook has an associated PDF or EPUB file."""
+        base_path = Path(directory_path) / uuid
+        
+        # Check for PDF files in the notebook directory
+        if base_path.exists():
+            pdf_files = list(base_path.glob("*.pdf"))
+            epub_files = list(base_path.glob("*.epub"))
+            
+            if pdf_files or epub_files:
+                return True
+        
+        # Check metadata for source type (imported PDFs/EPUBs have source info)
+        metadata_file = Path(directory_path) / f"{uuid}.metadata"
+        if metadata_file.exists():
+            try:
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                    source = metadata.get('source', '')
+                    if source and source != '':
+                        return True
+            except:
+                pass
+        
+        return False
     
     def export_text_to_file(
         self, 
@@ -867,13 +1071,79 @@ class NotebookTextExtractor:
 
 # Utility functions for standalone usage
 
+def analyze_remarkable_library(
+    directory_path: str,
+    output_file: Optional[str] = None,
+    cost_per_page: float = 0.003
+) -> Dict[str, NotebookAnalysis]:
+    """
+    Standalone function to analyze reMarkable library without processing - dry run.
+    
+    Args:
+        directory_path: Directory containing reMarkable files
+        output_file: Optional CSV file to save analysis results
+        cost_per_page: Estimated cost per page for Claude Vision OCR
+        
+    Returns:
+        Dictionary mapping notebook UUIDs to analysis results
+    """
+    extractor = NotebookTextExtractor()
+    results = extractor.analyze_directory(directory_path, cost_per_page)
+    
+    # Export analysis to CSV if requested
+    if output_file:
+        import pandas as pd
+        
+        analysis_data = []
+        for analysis in results.values():
+            # Convert timestamps if they exist
+            created_date = None
+            modified_date = None
+            
+            if analysis.created_time:
+                try:
+                    import datetime
+                    created_date = datetime.datetime.fromtimestamp(int(analysis.created_time) / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    created_date = analysis.created_time
+            
+            if analysis.last_modified:
+                try:
+                    import datetime
+                    modified_date = datetime.datetime.fromtimestamp(int(analysis.last_modified) / 1000).strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    modified_date = analysis.last_modified
+            
+            analysis_data.append({
+                'notebook_name': analysis.notebook_name,
+                'notebook_uuid': analysis.notebook_uuid,
+                'file_type': analysis.file_type,
+                'page_count': analysis.page_count,
+                'has_pdf_epub': analysis.has_pdf_epub,
+                'will_process': analysis.file_type == 'notebook' and not analysis.has_pdf_epub and analysis.page_count > 0,
+                'estimated_cost_usd': analysis.estimated_cost,
+                'created_date': created_date,
+                'last_modified': modified_date
+            })
+        
+        df = pd.DataFrame(analysis_data)
+        df = df.sort_values(['will_process', 'estimated_cost_usd'], ascending=[False, False])
+        df.to_csv(output_file, index=False)
+        
+        print(f"📊 Analysis exported to: {output_file}")
+    
+    return results
+
+
 def extract_text_from_directory(
     directory_path: str,
     output_dir: Optional[str] = None,
     db_path: Optional[str] = None,
     language: str = 'en',
     confidence_threshold: float = 0.7,
-    output_format: str = 'md'
+    output_format: str = 'md',
+    include_pdf_epub: bool = False,
+    max_pages: Optional[int] = None
 ) -> Dict[str, NotebookTextResult]:
     """
     Standalone function to extract text from all notebooks in a directory.
@@ -884,6 +1154,9 @@ def extract_text_from_directory(
         db_path: Optional database path for storing results
         language: Language for OCR
         confidence_threshold: Minimum confidence threshold
+        output_format: Output format ('txt', 'md', 'json', 'csv')
+        include_pdf_epub: Include notebooks with associated PDF/EPUB files
+        max_pages: Maximum pages to process per notebook (for testing)
         
     Returns:
         Dictionary mapping notebook UUIDs to results
@@ -903,6 +1176,16 @@ def extract_text_from_directory(
             if not extractor.is_available():
                 logger.error("Text extraction not available - check EasyOCR and pdf2image installation")
                 return {}
+            
+            # Apply filtering if needed
+            if not include_pdf_epub:
+                logger.info("Filtering enabled: Will skip notebooks with associated PDF/EPUB files")
+                extractor.filter_pdf_epub = True
+            
+            # Set max pages limit if specified
+            if max_pages:
+                logger.info(f"Page limit enabled: Will process maximum {max_pages} pages per notebook")
+                extractor.max_pages = max_pages
             
             results = extractor.process_directory(directory_path)
             

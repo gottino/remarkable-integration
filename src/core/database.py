@@ -255,7 +255,7 @@ class DatabaseManager:
             # Get table counts
             tables = [
                 'files', 'processing_results', 'highlights', 
-                'enhanced_highlights', 'ocr_results', 'events', 'integration_sync'
+                'enhanced_highlights', 'ocr_results', 'events', 'integration_sync', 'todos'
             ]
             
             stats = {

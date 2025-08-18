@@ -34,7 +34,8 @@ from src.processors.ocr_engine import OCREngine, process_directory_with_ocr
 from src.processors.pdf_ocr_engine import PDFOCREngine, process_directory_with_pdf_ocr
 from src.processors.notebook_text_extractor import (
     NotebookTextExtractor,
-    extract_text_from_directory
+    extract_text_from_directory,
+    analyze_remarkable_library
 )
 
 
@@ -647,8 +648,10 @@ def text():
 @click.option('--language', default='en', help='OCR language (default: en)')
 @click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
 @click.option('--format', 'output_format', type=click.Choice(['txt', 'md', 'json', 'csv']), default='md', help='Output format (default: md for Markdown)')
+@click.option('--include-pdf-epub', is_flag=True, help='Include notebooks with associated PDF/EPUB files (default: skip them)')
+@click.option('--max-pages', type=int, help='Maximum pages to process per notebook (for testing)')
 @click.pass_context
-def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, confidence: float, output_format: str):
+def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, confidence: float, output_format: str, include_pdf_epub: bool, max_pages: Optional[int]):
     """Extract text from notebooks using OCR."""
     
     if not os.path.exists(directory):
@@ -673,7 +676,9 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
             db_path=db_path,
             language=language,
             confidence_threshold=confidence,
-            output_format=output_format
+            output_format=output_format,
+            include_pdf_epub=include_pdf_epub,
+            max_pages=max_pages
         )
         
         _display_text_extraction_results(results)
@@ -723,6 +728,67 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
     except Exception as e:
         click.echo(f"Text extraction failed: {e}", err=True)
         logging.exception("Text extraction error")
+        sys.exit(1)
+
+
+@text.command('analyze')
+@click.argument('directory')
+@click.option('--output', '-o', help='Output CSV file for analysis results')
+@click.option('--cost-per-page', default=0.003, type=float, help='Estimated cost per page for OCR (default: $0.003)')
+@click.pass_context
+def analyze_library(ctx, directory: str, output: Optional[str], cost_per_page: float):
+    """Analyze reMarkable library without processing - dry run for cost estimation."""
+    
+    if not os.path.exists(directory):
+        click.echo(f"Directory not found: {directory}", err=True)
+        sys.exit(1)
+    
+    try:
+        click.echo("🔍 Analyzing reMarkable library...")
+        click.echo(f"📂 Input: {directory}")
+        if output:
+            click.echo(f"📄 Output: {output}")
+        click.echo(f"💰 Cost per page: ${cost_per_page}")
+        click.echo()
+        
+        results = analyze_remarkable_library(
+            directory,
+            output_file=output,
+            cost_per_page=cost_per_page
+        )
+        
+        # Display summary
+        handwriting_notebooks = [r for r in results.values() 
+                               if r.file_type == 'notebook' and not r.has_pdf_epub and r.page_count > 0]
+        pdf_epub_notebooks = [r for r in results.values() 
+                            if r.file_type in ['pdf', 'epub'] or r.has_pdf_epub]
+        
+        total_handwriting_pages = sum(r.page_count for r in handwriting_notebooks)
+        total_estimated_cost = sum(r.estimated_cost for r in handwriting_notebooks)
+        
+        click.echo()
+        click.echo("📊 Analysis Results:")
+        click.echo(f"  Total items found: {len(results)}")
+        click.echo(f"  📝 Handwriting notebooks (will be processed): {len(handwriting_notebooks)}")
+        click.echo(f"  📄 PDF/EPUB notebooks (will be skipped): {len(pdf_epub_notebooks)}")
+        click.echo(f"  📄 Total handwriting pages: {total_handwriting_pages}")
+        click.echo(f"  💰 Estimated total cost: ${total_estimated_cost:.2f}")
+        
+        if handwriting_notebooks:
+            click.echo()
+            click.echo("📝 Top 10 handwriting notebooks by page count:")
+            sorted_notebooks = sorted(handwriting_notebooks, key=lambda x: x.page_count, reverse=True)[:10]
+            for i, notebook in enumerate(sorted_notebooks, 1):
+                click.echo(f"  {i:2d}. {notebook.notebook_name} ({notebook.page_count} pages, ${notebook.estimated_cost:.2f})")
+        
+        if output:
+            click.echo(f"\n📊 Detailed analysis saved to: {output}")
+        
+        click.echo("\n✅ Analysis completed!")
+        
+    except Exception as e:
+        click.echo(f"Analysis failed: {e}", err=True)
+        logging.exception("Analysis error")
         sys.exit(1)
 
 
