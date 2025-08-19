@@ -2,12 +2,25 @@
 
 # reMarkable tablet settings
 remarkable:
-  # Path to reMarkable sync directory (required)
-  # This is where your reMarkable device syncs files
-  sync_directory: null  # e.g., "/Users/username/reMarkable" or "/home/user/reMarkable"
+  # Path to reMarkable app data directory (for two-tier watching)
+  # This is the original directory where reMarkable desktop app stores data
+  source_directory: null  # e.g., "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable" (macOS)
+  
+  # Path to local sync directory (for processing)
+  # This is where we sync data locally for safe processing
+  local_sync_directory: "./data/remarkable_sync"
+  
+  # Legacy: Path to reMarkable sync directory (deprecated - use source_directory instead)
+  sync_directory: null
+  
+  # Sync settings for two-tier watching
+  sync_debounce_seconds: 30  # Wait time after last change before syncing
+  sync_exclude_patterns:     # Patterns to exclude from sync
+    - "*.tmp"
+    - "*.DS_Store"
+    - ".*"
   
   # Path to backup directory (optional)
-  # If set, files will be backed up here before processing
   backup_directory: null
 
 # Database settings
@@ -41,15 +54,28 @@ processing:
     language: "en"
     confidence_threshold: 0.7
   
-  # File watching settings
+  # File watching settings (two-tier system)
   file_watching:
     enabled: true
-    watch_patterns:
+    # Processing cooldown to avoid duplicate processing (seconds)
+    processing_cooldown: 5
+    # Files to watch in source directory
+    source_watch_patterns:
       - "*.content"
+      - "*.metadata" 
       - "*.rm"
-    ignore_patterns:
+      - "*.pdf"
+      - "*.epub"
+    # Files to ignore in source directory
+    source_ignore_patterns:
       - ".*"
       - "*.tmp"
+      - "*.log"
+    # Files to process in local sync directory
+    local_process_patterns:
+      - "*.content"
+      - "*.metadata"
+      - "*.rm"
 
 # Third-party integrations
 integrations:
@@ -87,14 +113,35 @@ logging:
 
 # Example configurations for different setups:
 #
-# Basic setup:
+# Basic two-tier watching setup (macOS):
 # remarkable:
-#   sync_directory: "/Users/yourname/reMarkable"
+#   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
+#   local_sync_directory: "./data/remarkable_sync"
+#   sync_debounce_seconds: 30
 # 
-# Advanced setup with integrations:
+# Basic setup (Windows):
 # remarkable:
-#   sync_directory: "/Users/yourname/reMarkable"
-#   backup_directory: "/Users/yourname/reMarkable/backups"
+#   source_directory: "%APPDATA%/remarkable/desktop"
+#   local_sync_directory: "./data/remarkable_sync"
+#
+# Basic setup (Linux):
+# remarkable:
+#   source_directory: "~/.local/share/remarkable/desktop"
+#   local_sync_directory: "./data/remarkable_sync"
+# 
+# Advanced setup with integrations and custom sync settings:
+# remarkable:
+#   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
+#   local_sync_directory: "./data/remarkable_sync"
+#   sync_debounce_seconds: 15  # More responsive syncing
+#   sync_exclude_patterns:
+#     - "*.tmp"
+#     - "*.DS_Store"
+#     - "debug*"
+#   backup_directory: "./data/backups"
+# processing:
+#   file_watching:
+#     processing_cooldown: 2  # More responsive processing
 # integrations:
 #   readwise:
 #     enabled: true
