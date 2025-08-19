@@ -23,11 +23,29 @@ from pathlib import Path
 import time
 
 # Import our existing components
-from .pdf_ocr_engine import PDFOCREngine, OCRResult, ProcessingResult
+from .pdf_ocr_engine import PDFOCREngine, OCRResult
 from .tesseract_ocr_engine import TesseractOCREngine
 from .enhanced_tesseract_ocr import EnhancedTesseractOCREngine
 from .claude_vision_ocr import ClaudeVisionOCREngine
 from ..core.rm_parser import RemarkableParser
+
+
+@dataclass
+class NotebookProcessingResult:
+    """Result of notebook processing with text extraction."""
+    success: bool
+    notebook_uuid: str
+    notebook_name: str = "Unknown"
+    pages: List['NotebookPage'] = None
+    todos: List['TodoItem'] = None
+    error_message: str = None
+    processing_time_ms: int = None
+    
+    def __post_init__(self):
+        if self.pages is None:
+            self.pages = []
+        if self.todos is None:
+            self.todos = []
 from ..core.database import DatabaseManager
 from ..core.events import get_event_bus, EventType
 
@@ -252,7 +270,9 @@ class NotebookTextExtractor:
     
     def __init__(
         self,
+        data_directory: str = "./data/test_sync",
         db_connection: Optional[sqlite3.Connection] = None,
+        db_manager: Optional['DatabaseManager'] = None,
         language: str = 'en',
         confidence_threshold: float = 0.7,
         enable_gpu: bool = False,
@@ -262,13 +282,16 @@ class NotebookTextExtractor:
         Initialize the notebook text extractor.
         
         Args:
+            data_directory: Directory containing reMarkable data files
             db_connection: Optional database connection for storing results
             language: Language code for OCR (default: 'en')
             confidence_threshold: Minimum confidence for text recognition
             enable_gpu: Whether to use GPU acceleration (if available)
             temp_dir: Temporary directory for PDF conversion
         """
+        self.data_directory = data_directory
         self.db_connection = db_connection
+        self.db_manager = db_manager
         self.temp_dir = temp_dir or tempfile.gettempdir()
         
         # Initialize components
@@ -276,6 +299,7 @@ class NotebookTextExtractor:
         self.rm_parser = None
         self.filter_pdf_epub = False  # Filter out notebooks with associated PDF/EPUB files
         self.max_pages = None  # Maximum pages to process per notebook (for testing)
+        self.notebook_filter_list = None  # List of notebook UUIDs/names to process selectively
         
         # OCR Engine Priority:
         # 1. Claude Vision (best for handwriting)
@@ -325,6 +349,16 @@ class NotebookTextExtractor:
         logger.info(f"  OCR available: {self.ocr_engine.is_available()}")
         logger.info(f"  Language: {language}")
         logger.info(f"  Confidence threshold: {confidence_threshold}")
+    
+    def _get_db_connection(self):
+        """Get a thread-safe database connection."""
+        if self.db_manager:
+            return self.db_manager.get_connection()
+        elif self.db_connection:
+            # For backwards compatibility, but this may have thread issues
+            return self.db_connection
+        else:
+            return None
     
     def is_available(self) -> bool:
         """Check if the extractor is ready to process files."""
@@ -461,7 +495,7 @@ class NotebookTextExtractor:
             processing_time = int((time.time() - start_time) * 1000)
             
             # Store results in database if available
-            if self.db_connection and processed_pages:
+            if (self.db_connection or self.db_manager) and processed_pages:
                 self._store_notebook_results(uuid, doc_name, processed_pages)
             
             # Emit completion event
@@ -493,7 +527,7 @@ class NotebookTextExtractor:
             logger.info(f"  ✓ Extracted {len(result.todos)} todo items")
             
             # Store todos in database if available
-            if self.db_connection and result.todos:
+            if (self.db_connection or self.db_manager) and result.todos:
                 self._store_todos(result.todos)
             
             return result
@@ -603,11 +637,12 @@ class NotebookTextExtractor:
         pages: List[NotebookPage]
     ):
         """Store notebook text extraction results in database."""
-        if not self.db_connection:
+        db_conn = self._get_db_connection()
+        if not db_conn:
             return
         
         try:
-            cursor = self.db_connection.cursor()
+            cursor = db_conn.cursor()
             
             # Create notebook_text_extractions table if it doesn't exist
             cursor.execute('''
@@ -651,24 +686,211 @@ class NotebookTextExtractor:
                         result.language
                     ))
             
-            self.db_connection.commit()
+            db_conn.commit()
             
             total_regions = sum(len(page.ocr_results) for page in pages)
             logger.info(f"Stored {total_regions} text regions for notebook {notebook_name}")
             
         except Exception as e:
             logger.error(f"Error storing notebook results: {e}")
+        finally:
+            if self.db_manager:  # Close the connection if we created it
+                db_conn.close()
     
-    def _store_todos(self, todos: List[TodoItem]):
-        """Store extracted todos in database."""
-        if not self.db_connection:
+    def _calculate_page_content_hash(self, page: NotebookPage) -> str:
+        """Calculate hash of page content for change detection."""
+        import hashlib
+        
+        # Include factors that affect OCR results
+        content_parts = [
+            str(page.page_number),
+            str(len(page.ocr_results)),  # Number of text regions
+            # Hash of all text content
+            '|'.join(sorted(result.text for result in page.ocr_results)),
+            # Bounding boxes (for position changes)
+            str(sorted(str(result.bounding_box) for result in page.ocr_results))
+        ]
+        
+        content_string = '|'.join(content_parts)
+        return hashlib.md5(content_string.encode('utf-8')).hexdigest()
+    
+    def _store_notebook_results_incremental(
+        self, 
+        notebook_uuid: str, 
+        notebook_name: str, 
+        pages: List[NotebookPage]
+    ):
+        """Store results with page-level incremental updates."""
+        db_conn = self._get_db_connection()
+        if not db_conn:
             return
         
         try:
-            cursor = self.db_connection.cursor()
+            cursor = db_conn.cursor()
+            updated_pages = 0
+            total_regions = 0
+            
+            # For each page that was processed
+            for page in pages:
+                page_hash = self._calculate_page_content_hash(page)
+                
+                # Check if this page needs updating
+                cursor.execute('''
+                    SELECT page_content_hash FROM notebook_text_extractions 
+                    WHERE notebook_uuid = ? AND page_uuid = ? 
+                    LIMIT 1
+                ''', (notebook_uuid, page.page_uuid))
+                
+                existing_hash = cursor.fetchone()
+                
+                if existing_hash and existing_hash[0] == page_hash:
+                    logger.debug(f"Page {page.page_number} unchanged, skipping")
+                    continue
+                
+                # Page has changed - update it
+                logger.info(f"Updating page {page.page_number} in notebook {notebook_name}")
+                updated_pages += 1
+                
+                # Delete old entries for this specific page
+                cursor.execute('''
+                    DELETE FROM notebook_text_extractions 
+                    WHERE notebook_uuid = ? AND page_uuid = ?
+                ''', (notebook_uuid, page.page_uuid))
+                
+                # Insert new entries for this page
+                for result in page.ocr_results:
+                    cursor.execute('''
+                        INSERT INTO notebook_text_extractions 
+                        (notebook_uuid, notebook_name, page_uuid, page_number, 
+                         text, confidence, bounding_box, language, page_content_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        notebook_uuid,
+                        notebook_name,
+                        page.page_uuid,
+                        page.page_number,
+                        result.text,
+                        result.confidence,
+                        json.dumps(result.bounding_box.to_dict()),
+                        result.language,
+                        page_hash
+                    ))
+                    total_regions += 1
+            
+            db_conn.commit()
+            
+            if updated_pages > 0:
+                logger.info(f"Updated {updated_pages} pages with {total_regions} text regions for notebook {notebook_name}")
+            else:
+                logger.info(f"No changes detected in notebook {notebook_name}")
+                
+        except Exception as e:
+            logger.error(f"Error in incremental notebook update: {e}")
+            db_conn.rollback()
+        finally:
+            if self.db_manager:  # Close the connection if we created it
+                db_conn.close()
+    
+    def process_notebook_incremental(self, notebook_uuid: str, force_reprocess: bool = False) -> NotebookProcessingResult:
+        """Process notebook with incremental updates."""
+        notebook_name = "Unknown Notebook"  # Initialize default value
+        try:
+            # Find the notebook directory
+            notebook_dir = None
+            for root, dirs, files in os.walk(self.data_directory):
+                if notebook_uuid in dirs:
+                    notebook_dir = os.path.join(root, notebook_uuid)
+                    break
+            
+            if not notebook_dir:
+                return NotebookProcessingResult(
+                    success=False,
+                    error_message=f"Notebook directory not found: {notebook_uuid}",
+                    notebook_name="Unknown",
+                    notebook_uuid=notebook_uuid
+                )
+            
+            # Get notebook metadata
+            metadata_file = os.path.join(os.path.dirname(notebook_dir), f"{notebook_uuid}.metadata")
+            
+            if os.path.exists(metadata_file):
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                        notebook_name = metadata.get('visibleName', 'Unknown Notebook')
+                except:
+                    notebook_name = "Unknown Notebook"
+            
+            start_time = time.time()
+            
+            # Initialize rm_parser with the parent directory for v6 support
+            parent_dir = os.path.dirname(notebook_dir)
+            self.rm_parser = RemarkableParser(parent_dir, debug=False)
+            
+            # Process the notebook using the existing process_notebook method
+            content_file = os.path.join(parent_dir, f"{notebook_uuid}.content")
+            
+            notebook_info = {
+                'uuid': notebook_uuid,
+                'name': notebook_name,
+                'path': notebook_dir,
+                'content_file': content_file
+            }
+            
+            logger.info(f"Processing notebook: {notebook_name}")
+            # Pass the parent directory, not the notebook directory itself
+            result = self.process_notebook(notebook_info, parent_dir)
+            
+            if result.success:
+                # Convert NotebookTextResult to NotebookProcessingResult
+                notebook_result = NotebookProcessingResult(
+                    success=True,
+                    notebook_uuid=notebook_uuid,
+                    notebook_name=notebook_name,
+                    pages=result.pages if hasattr(result, 'pages') else [],
+                    todos=result.todos if hasattr(result, 'todos') else []
+                )
+                
+                if force_reprocess:
+                    logger.info(f"Force reprocessing - using regular storage")
+                    self._store_notebook_results(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [])
+                else:
+                    logger.info(f"Using incremental storage")
+                    self._store_notebook_results_incremental(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [])
+                
+                return notebook_result
+            else:
+                return NotebookProcessingResult(
+                    success=False,
+                    notebook_uuid=notebook_uuid,
+                    notebook_name=notebook_name,
+                    error_message=result.error_message if hasattr(result, 'error_message') else "Processing failed"
+                )
+            
+            
+        except Exception as e:
+            logger.error(f"Error processing notebook {notebook_uuid}: {e}")
+            return NotebookProcessingResult(
+                success=False,
+                error_message=str(e),
+                notebook_name=notebook_name,
+                notebook_uuid=notebook_uuid
+            )
+    
+    def _store_todos(self, todos: List[TodoItem]):
+        """Store extracted todos in database."""
+        db_conn = self._get_db_connection()
+        if not db_conn:
+            return
+        
+        try:
+            cursor = db_conn.cursor()
+            
+            logger.info(f"Attempting to store {len(todos)} todos in database")
             
             # Insert todos into the todos table
-            for todo in todos:
+            for i, todo in enumerate(todos):
+                logger.debug(f"Storing todo {i+1}: {todo.text[:50]}...")
                 cursor.execute('''
                     INSERT INTO todos 
                     (source_file, title, text, page_number, completed, confidence, created_at)
@@ -682,11 +904,32 @@ class NotebookTextExtractor:
                     todo.confidence
                 ))
             
-            self.db_connection.commit()
-            logger.info(f"Stored {len(todos)} todos in database")
+            db_conn.commit()
+            logger.info(f"Successfully stored {len(todos)} todos in database")
             
         except Exception as e:
             logger.error(f"Error storing todos in database: {e}")
+        finally:
+            if self.db_manager:  # Close the connection if we created it
+                db_conn.close()
+    
+    def _load_notebook_list(self, notebook_list_file: str) -> set:
+        """Load notebook UUIDs/names from file for selective processing."""
+        notebook_set = set()
+        
+        try:
+            with open(notebook_list_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):  # Skip empty lines and comments
+                        notebook_set.add(line)
+            
+            logger.info(f"Loaded {len(notebook_set)} notebooks from filter list: {notebook_list_file}")
+            
+        except Exception as e:
+            logger.error(f"Error loading notebook list from {notebook_list_file}: {e}")
+            
+        return notebook_set
     
     def process_directory(self, directory_path: str) -> Dict[str, NotebookTextResult]:
         """
@@ -721,6 +964,16 @@ class NotebookTextExtractor:
             filtered_count = original_count - len(notebooks)
             if filtered_count > 0:
                 logger.info(f"Filtered out {filtered_count} notebooks with associated PDF/EPUB files")
+        
+        # Filter notebooks if selective list is provided
+        if self.notebook_filter_list:
+            original_count = len(notebooks)
+            notebooks = [nb for nb in notebooks if nb['uuid'] in self.notebook_filter_list or nb['name'] in self.notebook_filter_list]
+            filtered_count = original_count - len(notebooks)
+            if filtered_count > 0:
+                logger.info(f"Selected {len(notebooks)} notebooks from filter list (excluded {filtered_count})")
+            elif len(notebooks) == 0:
+                logger.warning("No notebooks matched the filter list. Check UUIDs/names in the list file.")
         
         # Process each notebook
         for i, notebook in enumerate(notebooks, 1):
@@ -778,6 +1031,16 @@ class NotebookTextExtractor:
             return analyses
         
         logger.info(f"Found {len(notebooks)} total items")
+        
+        # Filter notebooks if selective list is provided
+        if self.notebook_filter_list:
+            original_count = len(notebooks)
+            notebooks = [nb for nb in notebooks if nb['uuid'] in self.notebook_filter_list or nb['name'] in self.notebook_filter_list]
+            filtered_count = original_count - len(notebooks)
+            if filtered_count > 0:
+                logger.info(f"Selected {len(notebooks)} notebooks from filter list (excluded {filtered_count})")
+            elif len(notebooks) == 0:
+                logger.warning("No notebooks matched the filter list. Check UUIDs/names in the list file.")
         
         handwriting_notebooks = 0
         pdf_epub_notebooks = 0
@@ -1074,7 +1337,8 @@ class NotebookTextExtractor:
 def analyze_remarkable_library(
     directory_path: str,
     output_file: Optional[str] = None,
-    cost_per_page: float = 0.003
+    cost_per_page: float = 0.003,
+    notebook_list: Optional[str] = None
 ) -> Dict[str, NotebookAnalysis]:
     """
     Standalone function to analyze reMarkable library without processing - dry run.
@@ -1083,11 +1347,18 @@ def analyze_remarkable_library(
         directory_path: Directory containing reMarkable files
         output_file: Optional CSV file to save analysis results
         cost_per_page: Estimated cost per page for Claude Vision OCR
+        notebook_list: Path to file containing notebook UUIDs or names to analyze
         
     Returns:
         Dictionary mapping notebook UUIDs to analysis results
     """
     extractor = NotebookTextExtractor()
+    
+    # Set notebook list filter if specified
+    if notebook_list:
+        extractor.notebook_filter_list = extractor._load_notebook_list(notebook_list)
+        logger.info(f"Notebook filter enabled: Will analyze {len(extractor.notebook_filter_list)} specified notebooks")
+    
     results = extractor.analyze_directory(directory_path, cost_per_page)
     
     # Export analysis to CSV if requested
@@ -1143,7 +1414,8 @@ def extract_text_from_directory(
     confidence_threshold: float = 0.7,
     output_format: str = 'md',
     include_pdf_epub: bool = False,
-    max_pages: Optional[int] = None
+    max_pages: Optional[int] = None,
+    notebook_list: Optional[str] = None
 ) -> Dict[str, NotebookTextResult]:
     """
     Standalone function to extract text from all notebooks in a directory.
@@ -1157,6 +1429,7 @@ def extract_text_from_directory(
         output_format: Output format ('txt', 'md', 'json', 'csv')
         include_pdf_epub: Include notebooks with associated PDF/EPUB files
         max_pages: Maximum pages to process per notebook (for testing)
+        notebook_list: Path to file containing notebook UUIDs or names to process
         
     Returns:
         Dictionary mapping notebook UUIDs to results
@@ -1186,6 +1459,11 @@ def extract_text_from_directory(
             if max_pages:
                 logger.info(f"Page limit enabled: Will process maximum {max_pages} pages per notebook")
                 extractor.max_pages = max_pages
+            
+            # Set notebook list filter if specified
+            if notebook_list:
+                extractor.notebook_filter_list = extractor._load_notebook_list(notebook_list)
+                logger.info(f"Notebook filter enabled: Will process {len(extractor.notebook_filter_list)} specified notebooks")
             
             results = extractor.process_directory(directory_path)
             

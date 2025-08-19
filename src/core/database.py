@@ -167,7 +167,44 @@ class DatabaseManager:
             )
         ''')
         
-        # Create indexes for better performance
+        # TODO: Add todos table for better todo tracking
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_file TEXT NOT NULL,
+                title TEXT NOT NULL,
+                text TEXT NOT NULL,
+                page_number TEXT,
+                completed BOOLEAN DEFAULT FALSE,
+                confidence REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Notebook text extractions table - with incremental update support
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notebook_text_extractions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                notebook_uuid TEXT NOT NULL,
+                notebook_name TEXT NOT NULL,
+                page_uuid TEXT NOT NULL,
+                page_number INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                bounding_box TEXT,
+                language TEXT,
+                page_content_hash TEXT,  -- For incremental updates
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(notebook_uuid, page_uuid, text, confidence)
+            )
+        ''')
+        
+        # Run schema migrations FIRST (before creating indexes that depend on migrated columns)
+        self._run_migrations(cursor)
+        
+        # Create indexes for better performance (after migrations)
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_files_path ON files(file_path)",
             "CREATE INDEX IF NOT EXISTS idx_files_modified ON files(last_modified)",
@@ -178,10 +215,96 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)",
             "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)",
             "CREATE INDEX IF NOT EXISTS idx_sync_integration ON integration_sync(integration_name, sync_status)",
+            "CREATE INDEX IF NOT EXISTS idx_notebook_extractions_notebook ON notebook_text_extractions(notebook_uuid)",
+            "CREATE INDEX IF NOT EXISTS idx_notebook_extractions_page ON notebook_text_extractions(notebook_uuid, page_uuid)",
+            "CREATE INDEX IF NOT EXISTS idx_notebook_extractions_hash ON notebook_text_extractions(page_content_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_todos_source ON todos(source_file)",
         ]
         
         for index_sql in indexes:
-            cursor.execute(index_sql)
+            try:
+                cursor.execute(index_sql)
+            except sqlite3.OperationalError as e:
+                if 'no such column' in str(e):
+                    logger.warning(f"Skipping index creation due to missing column: {index_sql}")
+                else:
+                    raise
+    
+    def _run_migrations(self, cursor):
+        """Run database schema migrations."""
+        # Create migrations table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL UNIQUE,
+                description TEXT NOT NULL,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Get current schema version
+        cursor.execute('SELECT MAX(version) FROM schema_migrations')
+        result = cursor.fetchone()
+        current_version = result[0] if result[0] is not None else 0
+        
+        # Define migrations
+        migrations = [
+            (1, 'Add page_content_hash to notebook_text_extractions', self._migration_001),
+            (2, 'Add updated_at triggers', self._migration_002),
+        ]
+        
+        # Apply pending migrations
+        for version, description, migration_func in migrations:
+            if version > current_version:
+                try:
+                    logger.info(f"Applying migration {version}: {description}")
+                    migration_func(cursor)
+                    
+                    # Record migration
+                    cursor.execute(
+                        'INSERT INTO schema_migrations (version, description) VALUES (?, ?)',
+                        (version, description)
+                    )
+                    
+                    logger.info(f"Migration {version} completed successfully")
+                    
+                except Exception as e:
+                    logger.error(f"Migration {version} failed: {e}")
+                    raise
+    
+    def _migration_001(self, cursor):
+        """Add page_content_hash column to notebook_text_extractions if it doesn't exist."""
+        try:
+            cursor.execute('ALTER TABLE notebook_text_extractions ADD COLUMN page_content_hash TEXT')
+        except sqlite3.OperationalError as e:
+            if 'duplicate column name' in str(e).lower():
+                logger.debug("page_content_hash column already exists")
+            else:
+                raise
+    
+    def _migration_002(self, cursor):
+        """Add triggers to update updated_at timestamps."""
+        # Trigger for notebook_text_extractions
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS update_notebook_extractions_timestamp 
+            AFTER UPDATE ON notebook_text_extractions
+            BEGIN
+                UPDATE notebook_text_extractions 
+                SET updated_at = CURRENT_TIMESTAMP 
+                WHERE id = NEW.id;
+            END
+        ''')
+        
+        # Trigger for todos
+        cursor.execute('''
+            CREATE TRIGGER IF NOT EXISTS update_todos_timestamp 
+            AFTER UPDATE ON todos
+            BEGIN
+                UPDATE todos 
+                SET updated_at = CURRENT_TIMESTAMP 
+                WHERE id = NEW.id;
+            END
+        ''')
     
     def get_connection(self) -> sqlite3.Connection:
         """

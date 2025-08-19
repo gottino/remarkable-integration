@@ -650,8 +650,9 @@ def text():
 @click.option('--format', 'output_format', type=click.Choice(['txt', 'md', 'json', 'csv']), default='md', help='Output format (default: md for Markdown)')
 @click.option('--include-pdf-epub', is_flag=True, help='Include notebooks with associated PDF/EPUB files (default: skip them)')
 @click.option('--max-pages', type=int, help='Maximum pages to process per notebook (for testing)')
+@click.option('--notebook-list', type=click.Path(exists=True), help='File containing notebook UUIDs or names to process (one per line)')
 @click.pass_context
-def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, confidence: float, output_format: str, include_pdf_epub: bool, max_pages: Optional[int]):
+def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, confidence: float, output_format: str, include_pdf_epub: bool, max_pages: Optional[int], notebook_list: Optional[str]):
     """Extract text from notebooks using OCR."""
     
     if not os.path.exists(directory):
@@ -678,7 +679,8 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
             confidence_threshold=confidence,
             output_format=output_format,
             include_pdf_epub=include_pdf_epub,
-            max_pages=max_pages
+            max_pages=max_pages,
+            notebook_list=notebook_list
         )
         
         _display_text_extraction_results(results)
@@ -735,8 +737,9 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
 @click.argument('directory')
 @click.option('--output', '-o', help='Output CSV file for analysis results')
 @click.option('--cost-per-page', default=0.003, type=float, help='Estimated cost per page for OCR (default: $0.003)')
+@click.option('--notebook-list', type=click.Path(exists=True), help='File containing notebook UUIDs or names to analyze (one per line)')
 @click.pass_context
-def analyze_library(ctx, directory: str, output: Optional[str], cost_per_page: float):
+def analyze_library(ctx, directory: str, output: Optional[str], cost_per_page: float, notebook_list: Optional[str]):
     """Analyze reMarkable library without processing - dry run for cost estimation."""
     
     if not os.path.exists(directory):
@@ -754,7 +757,8 @@ def analyze_library(ctx, directory: str, output: Optional[str], cost_per_page: f
         results = analyze_remarkable_library(
             directory,
             output_file=output,
-            cost_per_page=cost_per_page
+            cost_per_page=cost_per_page,
+            notebook_list=notebook_list
         )
         
         # Display summary
@@ -1013,30 +1017,116 @@ def export_data(ctx, output: str, enhanced: bool, ocr: bool, title: Optional[str
 
 
 @cli.command('watch')
-@click.option('--directory', help='Directory to watch (overrides config)')
+@click.option('--source-directory', help='reMarkable app directory to watch (overrides config)')
+@click.option('--local-directory', help='Local sync directory (overrides config)')
+@click.option('--sync-on-startup', is_flag=True, default=True, help='Perform initial sync on startup')
+@click.option('--process-immediately', is_flag=True, default=True, help='Process files immediately after sync')
 @click.pass_context
-def watch_directory(ctx, directory: Optional[str]):
-    """Watch directory for file changes and process automatically."""
+def watch_directory(ctx, source_directory: Optional[str], local_directory: Optional[str], 
+                   sync_on_startup: bool, process_immediately: bool):
+    """Watch reMarkable directory for changes and process automatically with two-tier system."""
     
     config_obj = ctx.obj['config']
     
-    if directory:
-        watch_dir = directory
-    else:
-        watch_dir = config_obj.get('remarkable.sync_directory')
+    # Import here to avoid circular imports
+    from ..core.file_watcher import ReMarkableWatcher
+    from ..processors.notebook_text_extractor import NotebookTextExtractor
     
-    if not watch_dir or not os.path.exists(watch_dir):
-        click.echo("Watch directory not found or not configured", err=True)
-        click.echo("Set remarkable.sync_directory in config or use --directory option")
+    # Override config with command line options if provided
+    if source_directory:
+        config_obj.set('remarkable.source_directory', source_directory)
+    if local_directory:
+        config_obj.set('remarkable.local_sync_directory', local_directory)
+    
+    # Validate configuration
+    source_dir = config_obj.get('remarkable.source_directory')
+    local_sync_dir = config_obj.get('remarkable.local_sync_directory', './data/remarkable_sync')
+    
+    if not source_dir:
+        click.echo("❌ Source directory not configured", err=True)
+        click.echo("Set remarkable.source_directory in config or use --source-directory option")
+        click.echo("\nExample locations:")
+        click.echo("  macOS: ~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable")
+        click.echo("  Windows: %APPDATA%/remarkable/desktop")
+        click.echo("  Linux: ~/.local/share/remarkable/desktop")
         sys.exit(1)
     
-    click.echo(f"Watching directory: {watch_dir}")
-    click.echo("Press Ctrl+C to stop")
+    if not os.path.exists(source_dir):
+        click.echo(f"❌ Source directory not found: {source_dir}", err=True)
+        click.echo("Make sure the reMarkable desktop app is installed and has synced data")
+        sys.exit(1)
     
-    # This would require implementing the file watcher
-    # For now, show a placeholder message
-    click.echo("File watching not yet implemented")
-    click.echo("Use 'remarkable-integration process directory' for batch processing")
+    # Setup database and text extractor
+    db_path = config_obj.get('database.path')
+    db_manager = DatabaseManager(db_path)
+    
+    # Initialize text extractor with database manager for thread safety
+    text_extractor = NotebookTextExtractor(
+        data_directory=local_sync_dir,
+        db_manager=db_manager
+    )
+    
+    # Initialize the two-tier watcher system
+    try:
+        click.echo("🚀 Starting reMarkable two-tier watching system...")
+        click.echo(f"📁 Source: {source_dir}")
+        click.echo(f"🔄 Local sync: {local_sync_dir}")
+        click.echo(f"⚙️  Sync on startup: {'Yes' if sync_on_startup else 'No'}")
+        click.echo(f"⚡ Process immediately: {'Yes' if process_immediately else 'No'}")
+        click.echo()
+        
+        # Create watcher
+        watcher = ReMarkableWatcher(config_obj)
+        watcher.set_text_extractor(text_extractor)
+        
+        # Start the system
+        import asyncio
+        
+        async def run_watcher():
+            """Run the watcher system."""
+            try:
+                success = await watcher.start()
+                
+                if not success:
+                    click.echo("❌ Failed to start watching system", err=True)
+                    return False
+                
+                click.echo("✅ Two-tier watching system started successfully!")
+                click.echo("📡 Monitoring reMarkable app directory for changes...")
+                click.echo("🔄 Syncing to local directory and processing automatically...")
+                click.echo("\n💡 The system will:")
+                click.echo("   1. Watch your reMarkable app directory for changes")
+                click.echo("   2. Automatically rsync changes to local directory") 
+                click.echo("   3. Process changed notebooks with incremental updates")
+                click.echo("   4. Extract text using AI-powered OCR")
+                click.echo("\nPress Ctrl+C to stop watching...")
+                
+                # Keep running until interrupted
+                try:
+                    while watcher.is_running:
+                        await asyncio.sleep(1)
+                except KeyboardInterrupt:
+                    click.echo("\n\n🛑 Stopping watcher...")
+                    await watcher.stop()
+                    click.echo("✅ Watcher stopped")
+                    return True
+                    
+            except Exception as e:
+                click.echo(f"❌ Error in watcher: {e}", err=True)
+                logger.exception("Watcher error")
+                return False
+        
+        # Run the async watcher
+        result = asyncio.run(run_watcher())
+        sys.exit(0 if result else 1)
+        
+    except KeyboardInterrupt:
+        click.echo("\n🛑 Interrupted by user")
+        sys.exit(0)
+    except Exception as e:
+        click.echo(f"❌ Failed to start watcher: {e}", err=True)
+        logger.exception("Watch command error")
+        sys.exit(1)
 
 
 @cli.command('version')
