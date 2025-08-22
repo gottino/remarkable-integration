@@ -23,6 +23,7 @@ poetry install
 poetry run python -m src.cli.main config api-key set
 
 # 🆕 UNIFIED: Process everything at once - handwritten notes + PDF/EPUB highlights
+# Automatically updates metadata for fresh folder structure and timestamps
 poetry run python -m src.cli.main process-all "/path/to/remarkable/data" \
   --output-dir "extracted_notes" \
   --export-highlights "highlights.csv" \

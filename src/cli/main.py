@@ -651,8 +651,9 @@ def text():
 @click.option('--include-pdf-epub', is_flag=True, help='Include notebooks with associated PDF/EPUB files (default: skip them)')
 @click.option('--max-pages', type=int, help='Maximum pages to process per notebook (for testing)')
 @click.option('--notebook-list', type=click.Path(exists=True), help='File containing notebook UUIDs or names to process (one per line)')
+@click.option('--skip-metadata-update', is_flag=True, help='Skip automatic metadata update (faster but may use stale data)')
 @click.pass_context
-def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, confidence: float, output_format: str, include_pdf_epub: bool, max_pages: Optional[int], notebook_list: Optional[str]):
+def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, confidence: float, output_format: str, include_pdf_epub: bool, max_pages: Optional[int], notebook_list: Optional[str], skip_metadata_update: bool):
     """Extract text from notebooks using OCR."""
     
     if not os.path.exists(directory):
@@ -670,6 +671,32 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
         click.echo(f"🌐 Language: {language}")
         click.echo(f"📊 Confidence: {confidence}")
         click.echo()
+        
+        # Auto-update metadata (unless skipped)
+        if not skip_metadata_update:
+            click.echo("📊 Updating notebook metadata...")
+            
+            # Try to find reMarkable sync directory for metadata
+            metadata_dir = _find_remarkable_sync_directory(config_obj, directory)
+            
+            if metadata_dir:
+                try:
+                    from ..core.notebook_paths import update_notebook_metadata
+                    from ..core.database import DatabaseManager
+                    
+                    db_manager = DatabaseManager(db_path)
+                    with db_manager.get_connection() as conn:
+                        updated_count = update_notebook_metadata(metadata_dir, conn)
+                    
+                    click.echo(f"✅ Updated {updated_count} notebook metadata records")
+                except Exception as e:
+                    click.echo(f"⚠️  Warning: Could not update metadata: {e}")
+                    click.echo("   Continuing with existing metadata...")
+            else:
+                click.echo("⚠️  Warning: Could not find reMarkable sync directory")
+                click.echo("   Use 'update-paths' command manually if needed")
+            
+            click.echo()
         
         results = extract_text_from_directory(
             directory,
@@ -972,6 +999,58 @@ def ocr_pdf_file(ctx, file_path: str, language: str, confidence: float, show: bo
         sys.exit(1)
 
 
+def _find_remarkable_sync_directory(config_obj, fallback_dir: str) -> Optional[str]:
+    """Find the best reMarkable sync directory for metadata updates."""
+    
+    # 1. Try configured sync directory first
+    configured_sync = config_obj.get('remarkable.sync_directory')
+    if configured_sync and os.path.exists(configured_sync):
+        return configured_sync
+    
+    # 2. Try common reMarkable Desktop sync locations
+    import platform
+    system = platform.system()
+    
+    common_paths = []
+    if system == "Darwin":  # macOS
+        home = os.path.expanduser("~")
+        common_paths = [
+            f"{home}/Library/Containers/com.remarkable.desktop/Data/Library/Application Support/remarkable/desktop",
+            f"{home}/.remarkable",
+            f"{home}/Documents/reMarkable"
+        ]
+    elif system == "Windows":
+        home = os.path.expanduser("~")
+        common_paths = [
+            f"{home}\\AppData\\Local\\remarkable\\desktop",
+            f"{home}\\Documents\\reMarkable"
+        ]
+    elif system == "Linux":
+        home = os.path.expanduser("~")
+        common_paths = [
+            f"{home}/.local/share/remarkable/desktop",
+            f"{home}/.remarkable",
+            f"{home}/Documents/reMarkable"
+        ]
+    
+    # Check each common path
+    for path in common_paths:
+        if os.path.exists(path) and os.path.isdir(path):
+            # Quick check - does it have .metadata files?
+            import glob
+            if glob.glob(os.path.join(path, "*.metadata")):
+                return path
+    
+    # 3. Check if fallback directory has metadata files
+    if fallback_dir and os.path.exists(fallback_dir):
+        import glob
+        if glob.glob(os.path.join(fallback_dir, "*.metadata")):
+            return fallback_dir
+    
+    # 4. No valid directory found
+    return None
+
+
 @cli.command('process-all')
 @click.argument('directory')
 @click.option('--output-dir', help='Directory to save extracted text files')
@@ -983,10 +1062,12 @@ def ocr_pdf_file(ctx, file_path: str, language: str, confidence: float, show: bo
 @click.option('--enhanced-highlights', is_flag=True, help='Use enhanced highlight extraction with EPUB matching')
 @click.option('--include-pdf-epub', is_flag=True, help='Include notebooks with PDF/EPUB files in text extraction')
 @click.option('--max-pages', type=int, help='Maximum pages to process per notebook (for testing)')
+@click.option('--skip-metadata-update', is_flag=True, help='Skip automatic metadata update (faster but may use stale data)')
 @click.pass_context
 def process_all(ctx, directory: str, output_dir: Optional[str], export_highlights: Optional[str], 
                 export_text: Optional[str], language: str, confidence: float, output_format: str,
-                enhanced_highlights: bool, include_pdf_epub: bool, max_pages: Optional[int]):
+                enhanced_highlights: bool, include_pdf_epub: bool, max_pages: Optional[int],
+                skip_metadata_update: bool):
     """Process directory with both handwritten text extraction AND highlight extraction."""
     
     if not os.path.exists(directory):
@@ -1008,6 +1089,33 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
         click.echo()
         
         db_manager = DatabaseManager(db_path)
+        
+        # Step 0: Auto-update metadata (unless skipped)
+        if not skip_metadata_update:
+            click.echo("📊 Step 0: Updating notebook metadata...")
+            
+            # Try to find reMarkable sync directory for metadata
+            metadata_dir = _find_remarkable_sync_directory(config_obj, directory)
+            
+            if metadata_dir:
+                try:
+                    from ..core.notebook_paths import update_notebook_metadata
+                    
+                    with db_manager.get_connection() as conn:
+                        updated_count = update_notebook_metadata(metadata_dir, conn)
+                    
+                    click.echo(f"✅ Updated {updated_count} notebook metadata records")
+                except Exception as e:
+                    click.echo(f"⚠️  Warning: Could not update metadata: {e}")
+                    click.echo("   Continuing with existing metadata...")
+            else:
+                click.echo("⚠️  Warning: Could not find reMarkable sync directory")
+                click.echo("   Use 'update-paths' command manually if needed")
+            
+            click.echo()
+        else:
+            click.echo("⏭️  Skipping metadata update (using existing data)")
+            click.echo()
         
         # Step 1: Extract handwritten text
         click.echo("📝 Step 1: Extracting handwritten text from notebooks...")

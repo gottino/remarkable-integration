@@ -103,6 +103,21 @@ poetry run python -m src.cli.main process-all "/path/to/data" --output-dir "note
 - 🎯 **Automatic separation** - handwritten vs PDF/EPUB content
 - 📊 **Dual export** - separate CSV files for text and highlights
 - 🔄 **All features** - combines every option from individual commands
+- 🔄 **Auto-metadata update** - always uses fresh notebook metadata
+
+### 🔄 **Automatic Metadata Updates**
+
+By default, all processing commands automatically update notebook metadata before processing:
+
+- **📂 Smart Directory Detection**: Automatically finds your reMarkable sync directory
+- **⚡ Fresh Data**: Ensures folder paths and timestamps are current
+- **🛡️ Graceful Fallback**: Continues with existing data if update fails
+- **⏭️ Skip Option**: Use `--skip-metadata-update` for faster processing
+
+**Common sync directory locations:**
+- **macOS**: `~/Library/Containers/com.remarkable.desktop/Data/Library/Application Support/remarkable/desktop`
+- **Windows**: `%USERPROFILE%\AppData\Local\remarkable\desktop`
+- **Linux**: `~/.local/share/remarkable/desktop`
 
 ### AI-Powered Text Extraction Commands
 
@@ -217,14 +232,19 @@ poetry run python -m src.cli.main process-all "/Users/yourname/reMarkable" \
 
 ### Daily Usage - Unified Processing (RECOMMENDED)
 ```bash
-# Process everything in one command
+# Process everything in one command (auto-updates metadata)
 poetry run python -m src.cli.main process-all "/path/to/remarkable" \
   --output-dir "today_notes" \
   --export-highlights "today_highlights.csv" \
   --enhanced-highlights
 
-# Quick processing without exports
+# Quick processing without exports (auto-updates metadata)
 poetry run python -m src.cli.main process-all "/path/to/remarkable" --output-dir "notes"
+
+# Faster processing using existing metadata (skip auto-update)
+poetry run python -m src.cli.main process-all "/path/to/remarkable" \
+  --output-dir "notes" \
+  --skip-metadata-update
 
 # Check what's in the database
 poetry run python -m src.cli.main database stats
