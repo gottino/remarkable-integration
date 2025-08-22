@@ -962,6 +962,8 @@ class EnhancedHighlightExtractor:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS enhanced_highlights (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    notebook_uuid TEXT NOT NULL,
+                    page_uuid TEXT,
                     source_file TEXT NOT NULL,
                     title TEXT NOT NULL,
                     original_text TEXT NOT NULL,
@@ -972,22 +974,29 @@ class EnhancedHighlightExtractor:
                     confidence REAL,
                     match_score REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(source_file, corrected_text, page_number) ON CONFLICT IGNORE
+                    UNIQUE(notebook_uuid, corrected_text, page_number) ON CONFLICT IGNORE
                 )
             ''')
+            
+            # Extract document UUID from source file path
+            doc_info = self._load_document_info(source_file)
+            notebook_uuid = doc_info.content_id
             
             # Clear existing highlights for this source
             cursor.execute('DELETE FROM enhanced_highlights WHERE source_file = ?', (source_file,))
             
             # Insert enhanced highlights
             for highlight in highlights:
+                # Extract page UUID from file_name (remove .rm extension)
+                page_uuid = Path(highlight.file_name).stem if highlight.file_name else None
+                
                 cursor.execute('''
                     INSERT INTO enhanced_highlights 
-                    (source_file, title, original_text, corrected_text, page_number, 
+                    (notebook_uuid, page_uuid, source_file, title, original_text, corrected_text, page_number, 
                      file_name, passage_id, confidence, match_score)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    source_file, highlight.title, highlight.original_text,
+                    notebook_uuid, page_uuid, source_file, highlight.title, highlight.original_text,
                     highlight.corrected_text, highlight.page_number, highlight.file_name,
                     highlight.passage_id, highlight.confidence, highlight.match_score
                 ))

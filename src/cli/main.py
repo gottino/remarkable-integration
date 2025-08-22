@@ -972,6 +972,207 @@ def ocr_pdf_file(ctx, file_path: str, language: str, confidence: float, show: bo
         sys.exit(1)
 
 
+@cli.command('process-all')
+@click.argument('directory')
+@click.option('--output-dir', help='Directory to save extracted text files')
+@click.option('--export-highlights', help='Export highlights to CSV file')
+@click.option('--export-text', help='Export extracted text to CSV file')
+@click.option('--language', default='en', help='OCR language (default: en)')
+@click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
+@click.option('--format', 'output_format', type=click.Choice(['txt', 'md', 'json', 'csv']), default='md', help='Output format for text files (default: md)')
+@click.option('--enhanced-highlights', is_flag=True, help='Use enhanced highlight extraction with EPUB matching')
+@click.option('--include-pdf-epub', is_flag=True, help='Include notebooks with PDF/EPUB files in text extraction')
+@click.option('--max-pages', type=int, help='Maximum pages to process per notebook (for testing)')
+@click.pass_context
+def process_all(ctx, directory: str, output_dir: Optional[str], export_highlights: Optional[str], 
+                export_text: Optional[str], language: str, confidence: float, output_format: str,
+                enhanced_highlights: bool, include_pdf_epub: bool, max_pages: Optional[int]):
+    """Process directory with both handwritten text extraction AND highlight extraction."""
+    
+    if not os.path.exists(directory):
+        click.echo(f"Directory not found: {directory}", err=True)
+        sys.exit(1)
+    
+    config_obj = ctx.obj['config']
+    db_path = config_obj.get('database.path')
+    
+    try:
+        click.echo("🚀 Starting combined processing: handwritten notes + PDF/EPUB highlights")
+        click.echo(f"📂 Input directory: {directory}")
+        if output_dir:
+            click.echo(f"📁 Text output directory: {output_dir}")
+        if export_highlights:
+            click.echo(f"📄 Highlights export: {export_highlights}")
+        if export_text:
+            click.echo(f"📄 Text export: {export_text}")
+        click.echo()
+        
+        db_manager = DatabaseManager(db_path)
+        
+        # Step 1: Extract handwritten text
+        click.echo("📝 Step 1: Extracting handwritten text from notebooks...")
+        text_results = extract_text_from_directory(
+            directory,
+            output_dir=output_dir,
+            db_path=db_path,
+            language=language,
+            confidence_threshold=confidence,
+            output_format=output_format,
+            include_pdf_epub=include_pdf_epub,
+            max_pages=max_pages
+        )
+        
+        click.echo(f"✅ Text extraction completed: {len([r for r in text_results.values() if r.success])} notebooks processed")
+        
+        # Step 2: Extract highlights from PDF/EPUB
+        click.echo("\n📖 Step 2: Extracting highlights from PDF/EPUB documents...")
+        
+        if enhanced_highlights:
+            from ..processors.enhanced_highlight_extractor import process_directory_enhanced
+            highlight_results = process_directory_enhanced(directory, db_manager)
+            highlight_type = "enhanced passages"
+        else:
+            from ..processors.highlight_extractor import process_directory
+            highlight_results = process_directory(directory, db_manager)
+            highlight_type = "highlights"
+        
+        total_highlights = sum(highlight_results.values())
+        click.echo(f"✅ Highlight extraction completed: {total_highlights} {highlight_type} from {len(highlight_results)} files")
+        
+        # Step 3: Export results if requested
+        if export_highlights or export_text:
+            click.echo("\n📤 Step 3: Exporting results...")
+            
+            with db_manager.get_connection() as conn:
+                if export_highlights:
+                    if enhanced_highlights:
+                        from ..processors.enhanced_highlight_extractor import EnhancedHighlightExtractor
+                        extractor = EnhancedHighlightExtractor(conn)
+                        extractor.export_enhanced_highlights_to_csv(export_highlights)
+                    else:
+                        from ..processors.highlight_extractor import HighlightExtractor
+                        extractor = HighlightExtractor(conn)
+                        extractor.export_highlights_to_csv(export_highlights)
+                    click.echo(f"   ✅ Highlights exported to: {export_highlights}")
+                
+                if export_text:
+                    # Export text extraction results
+                    import pandas as pd
+                    text_rows = []
+                    for uuid, result in text_results.items():
+                        if result.success:
+                            text_rows.append({
+                                'notebook_uuid': uuid,
+                                'notebook_name': result.notebook_name,
+                                'text_regions': result.total_text_regions,
+                                'processing_time_ms': result.processing_time_ms,
+                                'success': True
+                            })
+                        else:
+                            text_rows.append({
+                                'notebook_uuid': uuid,
+                                'notebook_name': result.notebook_name,
+                                'text_regions': 0,
+                                'processing_time_ms': result.processing_time_ms,
+                                'success': False,
+                                'error': result.error_message
+                            })
+                    
+                    if text_rows:
+                        df = pd.DataFrame(text_rows)
+                        df.to_csv(export_text, index=False)
+                        click.echo(f"   ✅ Text extraction results exported to: {export_text}")
+        
+        # Step 4: Display summary
+        click.echo(f"\n🎉 Combined processing completed successfully!")
+        click.echo(f"📊 Summary:")
+        click.echo(f"   📝 Handwritten notebooks: {len([r for r in text_results.values() if r.success])}/{len(text_results)} successful")
+        click.echo(f"   📖 PDF/EPUB highlights: {total_highlights} {highlight_type} from {len([c for c in highlight_results.values() if c > 0])} documents")
+        
+        if output_dir:
+            click.echo(f"   📁 Text files saved to: {output_dir}")
+        
+        total_text_regions = sum(r.total_text_regions for r in text_results.values() if r.success)
+        if total_text_regions > 0:
+            click.echo(f"   📝 Total text regions extracted: {total_text_regions}")
+        
+    except Exception as e:
+        click.echo(f"Combined processing failed: {e}", err=True)
+        logging.exception("Combined processing error")
+        sys.exit(1)
+
+
+@cli.command('update-paths')
+@click.option('--remarkable-dir', help='reMarkable directory path (overrides config)')
+@click.pass_context
+def update_notebook_paths(ctx, remarkable_dir: Optional[str]):
+    """Update notebook folder paths from reMarkable directory."""
+    
+    config_obj = ctx.obj['config']
+    
+    # Use provided directory or get from config
+    if not remarkable_dir:
+        remarkable_dir = config_obj.get('remarkable.sync_directory')
+    
+    if not remarkable_dir:
+        click.echo("❌ Error: No reMarkable directory specified", err=True)
+        click.echo("Set via config or use --remarkable-dir option", err=True)
+        sys.exit(1)
+    
+    if not os.path.exists(remarkable_dir):
+        click.echo(f"❌ Error: Directory not found: {remarkable_dir}", err=True)
+        sys.exit(1)
+    
+    try:
+        from ..core.notebook_paths import update_notebook_metadata
+        from ..core.database import DatabaseManager
+        
+        db_path = config_obj.get('database.path')
+        db_manager = DatabaseManager(db_path)
+        
+        click.echo(f"📂 Scanning reMarkable directory: {remarkable_dir}")
+        
+        with db_manager.get_connection() as conn:
+            updated_count = update_notebook_metadata(remarkable_dir, conn)
+        
+        click.echo(f"✅ Updated {updated_count} notebook metadata records in database")
+        
+        # Show some examples with metadata
+        click.echo("\n📄 Example notebook metadata:")
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT visible_name, full_path, last_modified, last_opened_page, pinned
+                FROM notebook_metadata 
+                WHERE item_type = 'DocumentType' 
+                ORDER BY last_modified DESC
+                LIMIT 5
+            """)
+            
+            for name, path, last_mod, last_page, pinned in cursor.fetchall():
+                pin_icon = "📌" if pinned else "📄"
+                # Convert timestamp to readable format
+                if last_mod and last_mod != "0":
+                    try:
+                        import datetime
+                        timestamp = int(last_mod) / 1000  # Convert from milliseconds
+                        date_str = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+                    except:
+                        date_str = "unknown"
+                else:
+                    date_str = "never"
+                    
+                click.echo(f"   {pin_icon} {name}")
+                click.echo(f"      Path: {path}")
+                click.echo(f"      Modified: {date_str}, Page: {last_page or 0}")
+                click.echo()
+        
+    except Exception as e:
+        click.echo(f"❌ Error updating notebook paths: {e}", err=True)
+        logging.exception("Update paths error")
+        sys.exit(1)
+
+
 @cli.command('export')
 @click.option('--output', '-o', required=True, help='Output CSV file path')
 @click.option('--enhanced', is_flag=True, help='Export enhanced highlights')

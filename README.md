@@ -22,10 +22,16 @@ poetry install
 # Set up your Claude API key securely
 poetry run python -m src.cli.main config api-key set
 
-# Extract text from handwritten notebooks
+# 🆕 UNIFIED: Process everything at once - handwritten notes + PDF/EPUB highlights
+poetry run python -m src.cli.main process-all "/path/to/remarkable/data" \
+  --output-dir "extracted_notes" \
+  --export-highlights "highlights.csv" \
+  --enhanced-highlights
+
+# OR extract handwritten text only
 poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --output-dir "extracted_notes"
 
-# Result: Perfect Markdown files with chronological organization!
+# Result: Perfect Markdown files + extracted highlights with chronological organization!
 ```
 
 ## 🎯 What You Get

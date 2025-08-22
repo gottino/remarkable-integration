@@ -65,6 +65,45 @@ poetry run python -m src.cli.main config api-key list
 poetry run python -m src.cli.main config api-key remove
 ```
 
+### ✨ Unified Processing Commands
+
+> 🚀 **NEW**: Process both handwritten notes AND PDF/EPUB highlights in one command!
+
+```bash
+# Complete processing - handwritten notes + PDF/EPUB highlights
+poetry run python -m src.cli.main process-all "/path/to/remarkable/data" \
+  --output-dir "extracted_notes" \
+  --export-highlights "highlights.csv" \
+  --export-text "text_results.csv"
+
+# Full featured example
+poetry run python -m src.cli.main process-all "/remarkable/data" \
+  --output-dir "digital_notes" \          # Save extracted text files
+  --export-highlights "highlights.csv" \  # Export highlights to CSV
+  --export-text "extraction_log.csv" \    # Export text results to CSV
+  --enhanced-highlights \                  # Use EPUB text matching
+  --format md \                           # Markdown output
+  --confidence 0.8 \                      # OCR quality threshold
+  --language en \                         # OCR language
+  --include-pdf-epub \                    # Include PDF/EPUB in text extraction
+  --max-pages 5                           # Limit pages (for testing)
+
+# Quick processing (basic options)
+poetry run python -m src.cli.main process-all "/path/to/data" --output-dir "notes"
+```
+
+**What `process-all` does:**
+1. **Step 1**: Extracts handwritten text from notebook `.rm` files using Claude Vision OCR
+2. **Step 2**: Extracts highlights from PDF/EPUB documents (basic or enhanced)
+3. **Step 3**: Exports both results to CSV files (optional)
+4. **Step 4**: Shows comprehensive summary of all processing
+
+**Key advantages:**
+- ⚡ **Single command** for complete reMarkable processing
+- 🎯 **Automatic separation** - handwritten vs PDF/EPUB content
+- 📊 **Dual export** - separate CSV files for text and highlights
+- 🔄 **All features** - combines every option from individual commands
+
 ### AI-Powered Text Extraction Commands
 
 > 🚀 **Revolutionary Feature**: Transform handwritten notes into perfect Markdown with human-level accuracy!  
@@ -162,20 +201,42 @@ poetry run python -m src.cli.main <command> --help
 poetry install
 poetry run python -m src.cli.main config init --sync-dir "/Users/yourname/reMarkable"
 
-# 2. Verify setup
+# 2. Set up Claude API key for AI OCR
+poetry run python -m src.cli.main config api-key set
+
+# 3. Verify setup
 poetry run python -m src.cli.main config check
 
-# 3. Process existing files
-poetry run python -m src.cli.main process directory "/Users/yourname/reMarkable" --enhanced
+# 4. Process everything at once (RECOMMENDED)
+poetry run python -m src.cli.main process-all "/Users/yourname/reMarkable" \
+  --output-dir "digital_notes" \
+  --export-highlights "all_highlights.csv" \
+  --export-text "extraction_log.csv" \
+  --enhanced-highlights
 ```
 
-### Daily Usage
+### Daily Usage - Unified Processing (RECOMMENDED)
 ```bash
-# Process new files and export highlights
-poetry run python -m src.cli.main process directory "/Users/yourname/reMarkable" --enhanced --export today_highlights.csv
+# Process everything in one command
+poetry run python -m src.cli.main process-all "/path/to/remarkable" \
+  --output-dir "today_notes" \
+  --export-highlights "today_highlights.csv" \
+  --enhanced-highlights
+
+# Quick processing without exports
+poetry run python -m src.cli.main process-all "/path/to/remarkable" --output-dir "notes"
 
 # Check what's in the database
 poetry run python -m src.cli.main database stats
+```
+
+### Daily Usage - Individual Commands
+```bash
+# Process new files and export highlights (legacy approach)
+poetry run python -m src.cli.main process directory "/Users/yourname/reMarkable" --enhanced --export today_highlights.csv
+
+# Extract handwritten text separately
+poetry run python -m src.cli.main text extract "/path/to/remarkable" --output-dir "notes"
 
 # Export all highlights for external use
 poetry run python -m src.cli.main export -o all_highlights.csv --enhanced
@@ -288,28 +349,37 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 
 ## 🎯 Quick Examples
 
-### Complete Workflow
+### Complete Workflow (UNIFIED APPROACH)
 ```bash
 # 1. Setup
 export ANTHROPIC_API_KEY="your-key"
 poetry install
 
-# 2. Extract all handwritten text
-poetry run python -m src.cli.main text extract "/remarkable/data" --output-dir "digital_notes"
+# 2. Process everything at once - handwritten notes + highlights
+poetry run python -m src.cli.main process-all "/remarkable/data" \
+  --output-dir "digital_notes" \
+  --export-highlights "highlights.csv" \
+  --enhanced-highlights
 
-# 3. Result: Perfect Markdown files ready for any note app!
+# 3. Result: Perfect Markdown files + extracted highlights ready for any app!
 ```
 
 ### Integration Examples
 ```bash
-# Extract to Obsidian vault
-poetry run python -m src.cli.main text extract data/ --output-dir "/path/to/obsidian/vault"
+# Complete processing to Obsidian vault
+poetry run python -m src.cli.main process-all data/ \
+  --output-dir "/path/to/obsidian/vault" \
+  --export-highlights "/path/to/obsidian/highlights.csv" \
+  --enhanced-highlights
 
-# Export structured data
+# Export structured data (text only)
 poetry run python -m src.cli.main text extract data/ --format json --output-dir "api_data"
 
-# Create spreadsheet export
-poetry run python -m src.cli.main text extract data/ --format csv --output-dir "analysis"
+# Create spreadsheet exports for analysis
+poetry run python -m src.cli.main process-all data/ \
+  --format csv \
+  --export-text "text_analysis.csv" \
+  --export-highlights "highlight_analysis.csv"
 ```
 poetry run python -m src.cli.main config check
 ```
@@ -322,19 +392,23 @@ poetry run python -m src.cli.main -v process directory /path/to/files
 
 ## Command Reference
 
-| Command | Description |
-|---------|-------------|
-| `config init` | Initialize configuration file |
-| `config check` | Validate configuration |
-| `config show` | Display configuration |
-| `process directory` | Process all files in directory |
-| `process file` | Process single file |
-| `database stats` | Show database statistics |
-| `database backup` | Create database backup |
-| `database cleanup` | Clean old data |
-| `export` | Export highlights to CSV |
-| `version` | Show version information |
-| `watch` | Watch directory for changes |
+| Command | Description | Type |
+|---------|-------------|------|
+| **`process-all`** | **🆕 Process handwritten notes + highlights together** | **Unified** |
+| `text extract` | Extract handwritten text using AI OCR | Text |
+| `text analyze` | Analyze library for cost estimation | Text |
+| `process directory` | Process highlights from PDF/EPUB files | Highlights |
+| `process file` | Process single file for highlights | Highlights |
+| `config init` | Initialize configuration file | Config |
+| `config check` | Validate configuration | Config |
+| `config show` | Display configuration | Config |
+| `config api-key set` | Set up Anthropic API key | Config |
+| `database stats` | Show database statistics | Database |
+| `database backup` | Create database backup | Database |
+| `database cleanup` | Clean old data | Database |
+| `export` | Export highlights to CSV | Export |
+| `version` | Show version information | Utility |
+| `watch` | Watch directory for changes | Utility |
 
 For detailed help on any command:
 ```bash

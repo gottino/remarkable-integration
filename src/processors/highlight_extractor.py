@@ -460,6 +460,8 @@ class HighlightExtractor:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS highlights (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    notebook_uuid TEXT NOT NULL,
+                    page_uuid TEXT,
                     source_file TEXT NOT NULL,
                     title TEXT NOT NULL,
                     text TEXT NOT NULL,
@@ -468,21 +470,30 @@ class HighlightExtractor:
                     confidence REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(source_file, text, page_number) ON CONFLICT IGNORE
+                    UNIQUE(notebook_uuid, text, page_number) ON CONFLICT IGNORE
                 )
             ''')
             
             # Clear any existing highlights for this source file to prevent duplicates
             cursor.execute('DELETE FROM highlights WHERE source_file = ?', (source_file,))
             
+            # Extract document UUID from source file path
+            doc_info = self._load_document_info(source_file)
+            notebook_uuid = doc_info.content_id
+            
             # Insert highlights
             inserted_count = 0
             for highlight in highlights:
+                # Extract page UUID from file_name (remove .rm extension)
+                page_uuid = Path(highlight.file_name).stem if highlight.file_name else None
+                
                 cursor.execute('''
                     INSERT INTO highlights 
-                    (source_file, title, text, page_number, file_name, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (notebook_uuid, page_uuid, source_file, title, text, page_number, file_name, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
+                    notebook_uuid,
+                    page_uuid,
                     source_file,
                     highlight.title,
                     highlight.text,

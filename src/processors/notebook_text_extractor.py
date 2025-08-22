@@ -893,10 +893,12 @@ class NotebookTextExtractor:
                 logger.debug(f"Storing todo {i+1}: {todo.text[:50]}...")
                 cursor.execute('''
                     INSERT INTO todos 
-                    (source_file, title, text, page_number, completed, confidence, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    (notebook_uuid, page_uuid, source_file, title, text, page_number, completed, confidence, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ''', (
-                    f"{todo.notebook_name} ({todo.notebook_uuid})",
+                    todo.notebook_uuid,
+                    None,  # page_uuid - could be added if needed
+                    todo.notebook_name,  # Clean source file name without UUID in brackets
                     todo.text[:100],  # Use first 100 chars as title
                     todo.text,
                     str(todo.page_number),
@@ -1477,12 +1479,32 @@ def extract_text_from_directory(
                 
                 for result in results.values():
                     if result.success:
-                        # Create safe filename
-                        safe_name = "".join(c for c in result.notebook_name if c.isalnum() or c in ' -_()[]').strip()
-                        
-                        # Use appropriate file extension
-                        file_extension = 'md' if output_format == 'txt' else output_format
-                        output_file = output_path / f"{safe_name}.{file_extension}"
+                        # Create output file respecting reMarkable folder structure
+                        try:
+                            from ..utils.export_helpers import create_output_path
+                            
+                            # Use appropriate file extension
+                            file_extension = 'md' if output_format == 'txt' else output_format
+                            
+                            db_conn = self._get_db_connection()
+                            output_file_path = create_output_path(
+                                result.notebook_uuid, 
+                                result.notebook_name, 
+                                db_conn,
+                                str(output_path),
+                                f".{file_extension}"
+                            )
+                            output_file = Path(output_file_path)
+                            
+                            # Ensure directory exists
+                            output_file.parent.mkdir(parents=True, exist_ok=True)
+                            
+                        except Exception as e:
+                            logger.warning(f"Could not create remarkable path, using fallback: {e}")
+                            # Fallback to original logic
+                            safe_name = "".join(c for c in result.notebook_name if c.isalnum() or c in ' -_()[]').strip()
+                            file_extension = 'md' if output_format == 'txt' else output_format
+                            output_file = output_path / f"{safe_name}.{file_extension}"
                         
                         extractor.export_text_to_file(result, str(output_file), output_format)
                         

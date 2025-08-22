@@ -75,6 +75,42 @@ class DatabaseManager:
             )
         ''')
         
+        # Notebook metadata table - comprehensive reMarkable metadata
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notebook_metadata (
+                notebook_uuid TEXT PRIMARY KEY,
+                visible_name TEXT NOT NULL,
+                full_path TEXT NOT NULL,
+                parent_uuid TEXT,
+                item_type TEXT NOT NULL,
+                last_modified TEXT,
+                last_opened TEXT,
+                last_opened_page INTEGER,
+                deleted BOOLEAN DEFAULT FALSE,
+                pinned BOOLEAN DEFAULT FALSE,
+                synced BOOLEAN DEFAULT FALSE,
+                version INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Create indexes for faster lookups
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_notebook_metadata_path 
+            ON notebook_metadata(full_path)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_notebook_metadata_last_modified 
+            ON notebook_metadata(last_modified)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_notebook_metadata_last_opened 
+            ON notebook_metadata(last_opened)
+        ''')
+        
         # Processing results table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS processing_results (
@@ -171,6 +207,8 @@ class DatabaseManager:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS todos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                notebook_uuid TEXT NOT NULL,
+                page_uuid TEXT,
                 source_file TEXT NOT NULL,
                 title TEXT NOT NULL,
                 text TEXT NOT NULL,
@@ -378,7 +416,7 @@ class DatabaseManager:
             # Get table counts
             tables = [
                 'files', 'processing_results', 'highlights', 
-                'enhanced_highlights', 'ocr_results', 'events', 'integration_sync', 'todos'
+                'enhanced_highlights', 'ocr_results', 'events', 'integration_sync', 'todos', 'notebook_metadata'
             ]
             
             stats = {
