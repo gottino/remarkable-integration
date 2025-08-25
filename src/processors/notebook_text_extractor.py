@@ -206,63 +206,109 @@ class NotebookTextResult:
         return todos
     
     def _extract_date_from_page(self, page: NotebookPage) -> Optional[str]:
-        """Extract date annotation from a page."""
+        """Extract date annotations from a page, handling multiple dates in 'lying L area'."""
         import re
         
-        # Look for date patterns in upper area of page (date annotations)
+        # Enhanced patterns for the "lying L area" dates with corner brackets
         date_patterns = [
-            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*[┘\]\)┐]?',
-            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2})\s*[┘\]\)┐]?'
+            # Lying L pattern with corner brackets (most common in your notes)
+            r'[⌐\[\(┌└╔╚]\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\s*[┘\]\)┐┘╗╝]',
+            r'[⌐\[\(┌└╔╚]\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{2})\s*[┘\]\)┐┘╗╝]',
+            # Standard bracketed dates
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\s*[┘\]\)┐]?',
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{2})\s*[┘\]\)┐]?',
+            # Plain dates without brackets
+            r'\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b',
+            r'\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{2})\b'
         ]
         
-        # Only look at OCR results from upper part of page (dates are usually in corners)
-        upper_results = [r for r in page.ocr_results if r.bounding_box.y < 200]
+        # Look at OCR results from upper area where titles and dates appear
+        # Expanded area to catch dates that might be positioned with titles
+        upper_results = [r for r in page.ocr_results if r.bounding_box.y < 300]
+        
+        found_dates = []
         
         for result in upper_results:
             text = result.text.strip()
             for pattern in date_patterns:
-                match = re.search(pattern, text)
-                if match:
+                matches = re.finditer(pattern, text)
+                for match in matches:
                     date_str = match.group(1)
                     # Normalize date format to dd-mm-yyyy
-                    if len(date_str.split('-')[2]) == 2:  # 2-digit year
-                        parts = date_str.split('-')
-                        if len(parts) == 3:
-                            date_str = f"{parts[0]}-{parts[1]}-20{parts[2]}"
-                    return date_str
+                    normalized_date = self._normalize_date_format(date_str)
+                    if normalized_date and normalized_date not in found_dates:
+                        found_dates.append(normalized_date)
         
-        return None
+        # Return the first (most likely primary) date found
+        # In the future, you might want to return all dates or handle them differently
+        return found_dates[0] if found_dates else None
+    
+    def _normalize_date_format(self, date_str: str) -> Optional[str]:
+        """Normalize date string to dd-mm-yyyy format."""
+        try:
+            # Handle different separators (-, /, .)
+            separators = ['-', '/', '.']
+            parts = None
+            
+            for sep in separators:
+                if sep in date_str:
+                    parts = date_str.split(sep)
+                    break
+            
+            if not parts or len(parts) != 3:
+                return None
+            
+            day, month, year = parts
+            
+            # Handle 2-digit years
+            if len(year) == 2:
+                year_int = int(year)
+                # Assume years 00-30 are 2000s, 31-99 are 1900s
+                if year_int <= 30:
+                    year = f"20{year}"
+                else:
+                    year = f"19{year}"
+            
+            # Validate basic ranges
+            if not (1 <= int(day) <= 31 and 1 <= int(month) <= 12 and 1900 <= int(year) <= 2100):
+                return None
+                
+            return f"{day.zfill(2)}-{month.zfill(2)}-{year}"
+        except (ValueError, IndexError):
+            return None
     
     def _extract_date_from_text(self, text: str) -> Optional[str]:
-        """Extract date from Claude Vision processed text."""
+        """Extract date from Claude Vision processed text, handling multiple dates in 'lying L area'."""
         import re
         
-        # Look for date patterns in the text (Claude Vision often formats dates nicely)
+        # Enhanced patterns for Claude Vision processed text with lying L area support
         date_patterns = [
-            r'\*\*Date:\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\*\*',  # **Date: dd-mm-yyyy**
-            r'Date:\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})',          # Date: dd-mm-yyyy
-            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})\s*[┘\]\)┐]?',  # bracketed dates
-            r'[⌐\[\(┌]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2})\s*[┘\]\)┐]?'   # 2-digit year
+            # Claude Vision formatted dates
+            r'\*\*Date:\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\*\*',  # **Date: dd-mm-yyyy**
+            r'Date:\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})',          # Date: dd-mm-yyyy
+            # Lying L pattern with corner brackets
+            r'[⌐\[\(┌└╔╚]\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\s*[┘\]\)┐┘╗╝]',
+            r'[⌐\[\(┌└╔╚]\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{2})\s*[┘\]\)┐┘╗╝]',
+            # Standard bracketed dates
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\s*[┘\]\)┐]?',
+            r'[⌐\[\(┌]?\s*(\d{1,2}[-/.]\d{1,2}[-/.]\d{2})\s*[┘\]\)┐]?',
+            # Plain dates
+            r'\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b',
+            r'\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{2})\b'
         ]
         
-        for pattern in date_patterns:
-            match = re.search(pattern, text)
-            if match:
-                date_str = match.group(1)
-                # Normalize date format to dd-mm-yyyy
-                if '-' in date_str and len(date_str.split('-')[2]) == 2:  # 2-digit year
-                    parts = date_str.split('-')
-                    if len(parts) == 3:
-                        date_str = f"{parts[0]}-{parts[1]}-20{parts[2]}"
-                elif '/' in date_str and len(date_str.split('/')[2]) == 2:  # 2-digit year with /
-                    parts = date_str.split('/')
-                    if len(parts) == 3:
-                        date_str = f"{parts[0]}-{parts[1]}-20{parts[2]}"
-                    else:
-                        date_str = date_str.replace('/', '-')  # normalize to -
-                return date_str
+        found_dates = []
         
-        return None
+        for pattern in date_patterns:
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                date_str = match.group(1)
+                normalized_date = self._normalize_date_format(date_str)
+                if normalized_date and normalized_date not in found_dates:
+                    found_dates.append(normalized_date)
+        
+        # Return the first (most likely primary) date found
+        return found_dates[0] if found_dates else None
 
 
 class NotebookTextExtractor:

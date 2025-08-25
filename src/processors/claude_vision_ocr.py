@@ -133,9 +133,9 @@ Instructions:
 - Maintain line breaks and logical structure
 
 IMPORTANT - Date Detection:
-Look specifically in the UPPER RIGHT CORNER for a date in format dd-mm-yyyy that might be surrounded by a "lying L" or bracket-like shape (⌐ or similar). This is crucial for organizing the content chronologically.
+Look specifically on the RIGHT SIDE of the page at any height for dates in format dd-mm-yyyy that might be surrounded by a "lying L" or bracket-like shape (⌐ or similar). These dates are typically positioned at the same height as underlined titles. This is crucial for organizing the content chronologically.
 
-If you find a date in the upper right corner:
+If you find a date on the right side:
 - Start your transcription with: "**Date: dd-mm-yyyy**"
 - Then add a horizontal rule: "---"
 - Then proceed with the content
