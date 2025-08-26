@@ -19,6 +19,7 @@ class RemarkableItem:
     visible_name: str
     parent: Optional[str]
     item_type: str  # 'CollectionType' for folders, 'DocumentType' for documents
+    document_type: str = 'unknown'  # 'notebook', 'pdf', 'epub', 'folder', 'unknown'
     last_modified: Optional[str] = None
     last_opened: Optional[str] = None
     last_opened_page: Optional[int] = None
@@ -37,8 +38,48 @@ class NotebookPathManager:
         self.items: Dict[str, RemarkableItem] = {}
         self.paths_cache: Dict[str, str] = {}
     
+    def _get_document_type(self, uuid: str) -> str:
+        """
+        Determine the actual document type by reading .content file.
+        
+        Returns:
+            'notebook' - handwritten notebook
+            'pdf' - PDF document
+            'epub' - EPUB document  
+            'folder' - collection/folder
+            'unknown' - cannot determine
+        """
+        # Check if it's a folder first (no .content file)
+        content_file = self.remarkable_dir / f"{uuid}.content"
+        
+        if not content_file.exists():
+            return 'folder'
+        
+        try:
+            with open(content_file, 'r') as f:
+                content_data = json.load(f)
+            
+            file_type = content_data.get('fileType', '')
+            
+            if file_type == '':
+                # Empty fileType usually means handwritten notebook
+                return 'notebook'
+            elif file_type == 'notebook':
+                return 'notebook'  
+            elif file_type == 'pdf':
+                return 'pdf'
+            elif file_type == 'epub':
+                return 'epub'
+            else:
+                logger.debug(f"Unknown fileType '{file_type}' for {uuid}")
+                return 'unknown'
+                
+        except Exception as e:
+            logger.debug(f"Could not read content file for {uuid}: {e}")
+            return 'unknown'
+
     def scan_metadata_files(self) -> None:
-        """Scan all .metadata files in the reMarkable directory."""
+        """Scan all .metadata files in the reMarkable directory and determine document types."""
         logger.info(f"Scanning metadata files in: {self.remarkable_dir}")
         
         metadata_files = list(self.remarkable_dir.glob("*.metadata"))
@@ -50,11 +91,15 @@ class NotebookPathManager:
                 with open(metadata_file, 'r') as f:
                     metadata = json.load(f)
                 
+                # Determine document type
+                document_type = self._get_document_type(uuid)
+                
                 item = RemarkableItem(
                     uuid=uuid,
                     visible_name=metadata.get('visibleName', 'Unknown'),
                     parent=metadata.get('parent', ''),  # Empty string means root
                     item_type=metadata.get('type', 'Unknown'),
+                    document_type=document_type,
                     last_modified=metadata.get('lastModified'),
                     last_opened=metadata.get('lastOpened'),
                     last_opened_page=metadata.get('lastOpenedPage'),
@@ -70,12 +115,19 @@ class NotebookPathManager:
                     
                 self.items[uuid] = item
                 
-                logger.debug(f"Loaded: {item.visible_name} (UUID: {uuid[:8]}..., Parent: {item.parent[:8] if item.parent else 'ROOT'})")
+                logger.debug(f"Loaded: {item.visible_name} (UUID: {uuid[:8]}..., Type: {document_type}, Parent: {item.parent[:8] if item.parent else 'ROOT'})")
                 
             except Exception as e:
                 logger.warning(f"Error reading {metadata_file}: {e}")
         
-        logger.info(f"Successfully loaded {len(self.items)} items")
+        # Log statistics
+        doc_types = {}
+        for item in self.items.values():
+            doc_types[item.document_type] = doc_types.get(item.document_type, 0) + 1
+        
+        logger.info(f"Successfully loaded {len(self.items)} items:")
+        for doc_type, count in sorted(doc_types.items()):
+            logger.info(f"  📄 {doc_type}: {count}")
     
     def build_path(self, uuid: str) -> str:
         """Build the full path for an item by traversing up the parent chain."""
@@ -130,6 +182,7 @@ class NotebookPathManager:
                     full_path TEXT NOT NULL,
                     parent_uuid TEXT,
                     item_type TEXT NOT NULL,
+                    document_type TEXT NOT NULL DEFAULT 'unknown',
                     last_modified TEXT,
                     last_opened TEXT,
                     last_opened_page INTEGER,
@@ -141,6 +194,14 @@ class NotebookPathManager:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Add document_type column to existing databases if it doesn't exist
+            try:
+                cursor.execute('ALTER TABLE notebook_metadata ADD COLUMN document_type TEXT DEFAULT "unknown"')
+                logger.info("Added document_type column to existing notebook_metadata table")
+            except:
+                # Column already exists, ignore
+                pass
             
             # Create indexes for faster lookups
             cursor.execute('''
@@ -178,15 +239,16 @@ class NotebookPathManager:
                 
                 cursor.execute('''
                     INSERT INTO notebook_metadata 
-                    (notebook_uuid, visible_name, full_path, parent_uuid, item_type,
+                    (notebook_uuid, visible_name, full_path, parent_uuid, item_type, document_type,
                      last_modified, last_opened, last_opened_page, deleted, pinned, synced, version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     uuid,
                     item.visible_name,
                     path,
                     item.parent,
                     item.item_type,
+                    item.document_type,
                     item.last_modified,
                     item.last_opened,
                     item.last_opened_page,

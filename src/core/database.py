@@ -83,6 +83,7 @@ class DatabaseManager:
                 full_path TEXT NOT NULL,
                 parent_uuid TEXT,
                 item_type TEXT NOT NULL,
+                document_type TEXT NOT NULL DEFAULT 'unknown',
                 last_modified TEXT,
                 last_opened TEXT,
                 last_opened_page INTEGER,
@@ -94,6 +95,13 @@ class DatabaseManager:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Add document_type column to existing databases if it doesn't exist
+        try:
+            cursor.execute('ALTER TABLE notebook_metadata ADD COLUMN document_type TEXT DEFAULT "unknown"')
+        except sqlite3.OperationalError:
+            # Column already exists, ignore
+            pass
         
         # Create indexes for faster lookups
         cursor.execute('''
