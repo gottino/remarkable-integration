@@ -410,6 +410,54 @@ Enable verbose logging for troubleshooting:
 poetry run python -m src.cli.main -v process directory /path/to/files
 ```
 
+## EPUB Metadata Extraction
+
+The system automatically extracts rich metadata from EPUB files and stores it in the database:
+
+### Update Metadata
+```bash
+# Scan reMarkable directory and extract all EPUB metadata
+poetry run python -m src.cli.main update-paths --remarkable-dir "/path/to/remarkable/data"
+```
+
+### What Gets Extracted
+- **Authors**: Multiple authors supported, stored as comma-separated values
+- **Publisher**: Publishing company information  
+- **Publication Date**: Normalized to YYYY-MM-DD format
+- **Cover Images**: Automatically extracted and saved to `{data_directory}/covers/`
+
+### Cover Image Detection
+The system uses multiple strategies to find cover images:
+1. **Direct filename matching**: `cover.jpg`, `cover.png`, etc.
+2. **OPF manifest parsing**: Reads EPUB metadata for cover references  
+3. **Largest image fallback**: Uses biggest image file (minimum 10KB)
+
+### Configuration
+Set your data directory in `config.yaml`:
+```yaml
+remarkable:
+  data_directory: "./data"  # Cover images stored in ./data/covers/
+```
+
+### Database Query Examples
+```bash
+# View all EPUB metadata
+poetry run python -c "
+import sqlite3
+conn = sqlite3.connect('remarkable_pipeline.db')
+cursor = conn.cursor()
+cursor.execute('''
+    SELECT visible_name, authors, publisher, publication_date, cover_image_path 
+    FROM notebook_metadata 
+    WHERE document_type = 'epub'
+''')
+for row in cursor.fetchall():
+    print(f'{row[0]} by {row[1]} ({row[2]}, {row[3]})')
+    print(f'Cover: {row[4]}')
+    print('---')
+"
+```
+
 ## Command Reference
 
 | Command | Description | Type |
@@ -423,6 +471,7 @@ poetry run python -m src.cli.main -v process directory /path/to/files
 | `config check` | Validate configuration | Config |
 | `config show` | Display configuration | Config |
 | `config api-key set` | Set up Anthropic API key | Config |
+| `update-paths` | Update notebook metadata and extract EPUB info | Metadata |
 | `database stats` | Show database statistics | Database |
 | `database backup` | Create database backup | Database |
 | `database cleanup` | Clean old data | Database |

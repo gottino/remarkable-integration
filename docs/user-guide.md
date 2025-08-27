@@ -85,6 +85,94 @@ poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --outp
 # Result: Perfect Markdown files in "my_digital_notes/"
 ```
 
+## ⚙️ Configuration
+
+The system can be customized through the `config/config.yaml` file. Here are the key settings:
+
+### Basic Configuration
+
+```yaml
+# reMarkable tablet settings
+remarkable:
+  # Path to reMarkable app data directory (for source files)
+  source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
+  
+  # Path to local sync directory (temporary processing)
+  local_sync_directory: "./data/remarkable_sync"
+  
+  # Path to application data directory (processed files, covers, etc.)
+  data_directory: "./data"
+```
+
+### EPUB Metadata Extraction
+
+The system automatically extracts rich metadata from EPUB files:
+
+**What Gets Extracted:**
+- **Authors** (multiple authors supported)
+- **Publisher** information  
+- **Publication dates** (normalized to YYYY-MM-DD format)
+- **Cover images** (stored in `{data_directory}/covers/`)
+
+**Cover Image Detection:**
+1. **Direct filename matching**: `cover.jpg`, `cover.png`, etc.
+2. **OPF manifest parsing**: Reads EPUB metadata for cover references
+3. **Largest image fallback**: Uses biggest image file (minimum 10KB)
+
+**File Structure:**
+```
+./data/                              # Your configured data_directory
+├── covers/                          # Extracted cover images
+│   ├── abc123def456_cover.jpeg     # {uuid}_cover.{extension}
+│   └── def789ghi012_cover.png
+└── remarkable_sync/                 # Synced reMarkable files
+    ├── *.metadata
+    ├── *.content  
+    └── *.epub
+```
+
+**Database Storage:**
+All metadata is automatically stored in the SQLite database:
+```sql
+SELECT visible_name, authors, publisher, publication_date, cover_image_path 
+FROM notebook_metadata 
+WHERE document_type = 'epub';
+```
+
+### Platform-Specific Examples
+
+**macOS:**
+```yaml
+remarkable:
+  source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
+  local_sync_directory: "./data/remarkable_sync"
+  data_directory: "./data"
+```
+
+**Windows:**
+```yaml
+remarkable:
+  source_directory: "%APPDATA%/remarkable/desktop"
+  local_sync_directory: "./data/remarkable_sync" 
+  data_directory: "./data"
+```
+
+**Linux:**
+```yaml
+remarkable:
+  source_directory: "~/.local/share/remarkable/desktop"
+  local_sync_directory: "./data/remarkable_sync"
+  data_directory: "./data"
+```
+
+**Production (Docker):**
+```yaml
+remarkable:
+  source_directory: "/remarkable/source"
+  local_sync_directory: "/data/remarkable_sync"
+  data_directory: "/data"
+```
+
 ## 📁 Understanding reMarkable Data
 
 ### Finding Your Data
