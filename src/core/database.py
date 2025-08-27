@@ -84,6 +84,9 @@ class DatabaseManager:
                 parent_uuid TEXT,
                 item_type TEXT NOT NULL,
                 document_type TEXT NOT NULL DEFAULT 'unknown',
+                authors TEXT,
+                publisher TEXT,
+                publication_date TEXT,
                 last_modified TEXT,
                 last_opened TEXT,
                 last_opened_page INTEGER,
@@ -96,12 +99,20 @@ class DatabaseManager:
             )
         ''')
         
-        # Add document_type column to existing databases if it doesn't exist
-        try:
-            cursor.execute('ALTER TABLE notebook_metadata ADD COLUMN document_type TEXT DEFAULT "unknown"')
-        except sqlite3.OperationalError:
-            # Column already exists, ignore
-            pass
+        # Add new columns to existing databases if they don't exist
+        new_columns = [
+            ('document_type', 'TEXT DEFAULT "unknown"'),
+            ('authors', 'TEXT'),
+            ('publisher', 'TEXT'), 
+            ('publication_date', 'TEXT')
+        ]
+        
+        for column_name, column_def in new_columns:
+            try:
+                cursor.execute(f'ALTER TABLE notebook_metadata ADD COLUMN {column_name} {column_def}')
+            except sqlite3.OperationalError:
+                # Column already exists, ignore
+                pass
         
         # Create indexes for faster lookups
         cursor.execute('''

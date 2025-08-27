@@ -14,6 +14,8 @@ from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from pathlib import Path
 import time
+import threading
+from datetime import datetime, timedelta
 
 # Core dependencies
 import numpy as np
@@ -50,6 +52,83 @@ from ..utils.api_keys import get_anthropic_api_key
 logger = logging.getLogger(__name__)
 
 
+class ClaudeRateLimiter:
+    """Rate limiter for Claude API calls based on official rate limits."""
+    
+    def __init__(
+        self, 
+        requests_per_minute: int = 50,
+        tokens_per_minute: int = 40000,
+        output_tokens_per_minute: int = 8000
+    ):
+        """
+        Initialize rate limiter with Claude Sonnet 3.5 limits:
+        - 50 requests per minute
+        - 40,000 input tokens per minute  
+        - 8,000 output tokens per minute
+        """
+        self.requests_per_minute = requests_per_minute
+        self.tokens_per_minute = tokens_per_minute
+        self.output_tokens_per_minute = output_tokens_per_minute
+        
+        # Tracking variables
+        self.request_times: List[datetime] = []
+        self.token_usage: List[Tuple[datetime, int, int]] = []  # (time, input_tokens, output_tokens)
+        self.lock = threading.Lock()
+        
+        # Minimum delay between requests to stay under limit
+        self.min_request_delay = 60.0 / requests_per_minute  # ~1.2 seconds for 50 req/min
+        self.last_request_time = None
+        
+        logger.info(f"Claude Rate Limiter initialized: {requests_per_minute} req/min, {tokens_per_minute} input tokens/min")
+    
+    def wait_if_needed(self, estimated_input_tokens: int = 2000, estimated_output_tokens: int = 500):
+        """Wait if necessary to stay within rate limits."""
+        with self.lock:
+            now = datetime.now()
+            
+            # Clean old entries (older than 1 minute)
+            cutoff = now - timedelta(minutes=1)
+            self.request_times = [t for t in self.request_times if t > cutoff]
+            self.token_usage = [(t, inp, out) for t, inp, out in self.token_usage if t > cutoff]
+            
+            # Check request rate limit
+            if len(self.request_times) >= self.requests_per_minute:
+                oldest_request = min(self.request_times)
+                wait_time = 60.0 - (now - oldest_request).total_seconds()
+                if wait_time > 0:
+                    logger.info(f"Rate limit: waiting {wait_time:.1f}s for request limit")
+                    time.sleep(wait_time)
+                    return
+            
+            # Check minimum delay between requests  
+            if self.last_request_time:
+                time_since_last = (now - self.last_request_time).total_seconds()
+                if time_since_last < self.min_request_delay:
+                    wait_time = self.min_request_delay - time_since_last
+                    logger.debug(f"Rate limit: minimum delay {wait_time:.1f}s between requests")
+                    time.sleep(wait_time)
+                    return
+            
+            # Check token limits
+            current_input_tokens = sum(inp for _, inp, _ in self.token_usage)
+            current_output_tokens = sum(out for _, _, out in self.token_usage)
+            
+            if (current_input_tokens + estimated_input_tokens > self.tokens_per_minute or 
+                current_output_tokens + estimated_output_tokens > self.output_tokens_per_minute):
+                logger.info(f"Rate limit: waiting for token limits (input: {current_input_tokens}/{self.tokens_per_minute}, output: {current_output_tokens}/{self.output_tokens_per_minute})")
+                time.sleep(5.0)  # Wait 5 seconds and check again
+                return self.wait_if_needed(estimated_input_tokens, estimated_output_tokens)
+    
+    def record_request(self, input_tokens: int = 0, output_tokens: int = 0):
+        """Record a successful API request."""
+        with self.lock:
+            now = datetime.now()
+            self.request_times.append(now)
+            self.token_usage.append((now, input_tokens, output_tokens))
+            self.last_request_time = now
+
+
 class ClaudeVisionOCREngine:
     """OCR engine using Claude's vision capabilities for handwritten text."""
     
@@ -58,7 +137,10 @@ class ClaudeVisionOCREngine:
         db_connection: Optional[sqlite3.Connection] = None,
         api_key: Optional[str] = None,
         model: str = "claude-3-5-sonnet-20241022",
-        confidence_threshold: float = 0.8
+        confidence_threshold: float = 0.8,
+        rate_limit_requests: int = 30,
+        rate_limit_input_tokens: int = 25000,
+        rate_limit_output_tokens: int = 5000
     ):
         """
         Initialize Claude Vision OCR engine.
@@ -68,11 +150,21 @@ class ClaudeVisionOCREngine:
             api_key: Anthropic API key (or set ANTHROPIC_API_KEY env var)
             model: Claude model to use for OCR
             confidence_threshold: Confidence threshold (0-1)
+            rate_limit_requests: Max requests per minute (default: 30 for conservative limit)
+            rate_limit_input_tokens: Max input tokens per minute (default: 25,000)
+            rate_limit_output_tokens: Max output tokens per minute (default: 5,000)
         """
         self.processor_type = "claude_vision_ocr_engine"
         self.db_connection = db_connection
         self.model = model
         self.confidence_threshold = confidence_threshold
+        
+        # Initialize rate limiter
+        self.rate_limiter = ClaudeRateLimiter(
+            requests_per_minute=rate_limit_requests,
+            tokens_per_minute=rate_limit_input_tokens,
+            output_tokens_per_minute=rate_limit_output_tokens
+        )
         
         # Initialize Claude client
         self.client = None
@@ -300,12 +392,20 @@ Return only the formatted Markdown text, no explanations."""
             raise
     
     def _transcribe_with_claude(self, image_base64: str) -> Optional[str]:
-        """Send image to Claude for transcription."""
+        """Send image to Claude for transcription with rate limiting."""
         if not self.client:
             logger.error("Claude client not initialized")
             return None
         
         try:
+            # Apply rate limiting before making the request
+            estimated_input_tokens = 2000  # Rough estimate for image + prompt
+            estimated_output_tokens = 500  # Typical OCR response
+            
+            logger.debug(f"Applying rate limiting (est. {estimated_input_tokens} input, {estimated_output_tokens} output tokens)")
+            self.rate_limiter.wait_if_needed(estimated_input_tokens, estimated_output_tokens)
+            
+            # Make the API call
             message = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
@@ -329,6 +429,13 @@ Return only the formatted Markdown text, no explanations."""
                     }
                 ]
             )
+            
+            # Record the successful request for rate limiting
+            actual_input_tokens = getattr(message.usage, 'input_tokens', estimated_input_tokens)
+            actual_output_tokens = getattr(message.usage, 'output_tokens', estimated_output_tokens)
+            self.rate_limiter.record_request(actual_input_tokens, actual_output_tokens)
+            
+            logger.debug(f"API usage: {actual_input_tokens} input, {actual_output_tokens} output tokens")
             
             if message.content and len(message.content) > 0:
                 # Extract text from Claude's response

@@ -550,6 +550,11 @@ class NotebookTextExtractor:
                 for page_num, page_uuid in enumerate(page_uuid_list, 1):
                     logger.debug(f"  Processing page {page_num}/{len(page_uuid_list)}")
                     
+                    # Check if this page was already processed (incremental processing)
+                    if self._is_page_already_processed(uuid, page_uuid, page_num):
+                        logger.debug(f"    ⏩ Page {page_num}: Already processed, skipping")
+                        continue
+                    
                     # Find the .rm file for this page
                     page_rm_file = Path(input_path) / uuid / f"{page_uuid}.rm"
                     
@@ -628,6 +633,39 @@ class NotebookTextExtractor:
                 todos=[],
                 error_message=str(e)
             )
+    
+    def _is_page_already_processed(self, notebook_uuid: str, page_uuid: str, page_number: int) -> bool:
+        """Check if a page was already processed and stored in database."""
+        try:
+            if not (self.db_connection or self.db_manager):
+                return False
+                
+            # Use the available connection
+            conn = self.db_connection if self.db_connection else self.db_manager.get_connection()
+            
+            # Check if page exists in notebook_text_extractions table
+            if self.db_connection:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) FROM notebook_text_extractions 
+                    WHERE notebook_uuid = ? AND page_uuid = ? AND page_number = ?
+                """, (notebook_uuid, page_uuid, page_number))
+                count = cursor.fetchone()[0]
+                return count > 0
+            else:
+                # Using db_manager - need to handle context properly
+                with conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM notebook_text_extractions 
+                        WHERE notebook_uuid = ? AND page_uuid = ? AND page_number = ?
+                    """, (notebook_uuid, page_uuid, page_number))
+                    count = cursor.fetchone()[0]
+                    return count > 0
+                    
+        except Exception as e:
+            logger.debug(f"Error checking if page already processed: {e}")
+            return False  # If check fails, process the page
     
     def _process_single_page(
         self, 
