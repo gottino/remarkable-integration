@@ -10,6 +10,10 @@ remarkable:
   # This is where we sync data locally for safe processing
   local_sync_directory: "./data/remarkable_sync"
   
+  # Path to application data directory (for extracted content, covers, etc.)
+  # This is where processed data like cover images and extracted text are stored
+  data_directory: "./data"
+  
   # Legacy: Path to reMarkable sync directory (deprecated - use source_directory instead)
   sync_directory: null
   
@@ -117,22 +121,26 @@ logging:
 # remarkable:
 #   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
 #   local_sync_directory: "./data/remarkable_sync"
+#   data_directory: "./data"
 #   sync_debounce_seconds: 30
 # 
 # Basic setup (Windows):
 # remarkable:
 #   source_directory: "%APPDATA%/remarkable/desktop"
 #   local_sync_directory: "./data/remarkable_sync"
+#   data_directory: "./data"
 #
 # Basic setup (Linux):
 # remarkable:
 #   source_directory: "~/.local/share/remarkable/desktop"
 #   local_sync_directory: "./data/remarkable_sync"
+#   data_directory: "./data"
 # 
 # Advanced setup with integrations and custom sync settings:
 # remarkable:
 #   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
 #   local_sync_directory: "./data/remarkable_sync"
+#   data_directory: "./data"
 #   sync_debounce_seconds: 15  # More responsive syncing
 #   sync_exclude_patterns:
 #     - "*.tmp"

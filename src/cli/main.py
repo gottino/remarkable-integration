@@ -11,6 +11,8 @@ import os
 import sys
 import logging
 import time
+import shutil
+import yaml
 from pathlib import Path
 from typing import Optional
 
@@ -299,12 +301,13 @@ def database(ctx):
 
 
 @database.command('stats')
+@click.option('--database', help='Database path (overrides config)')
 @click.pass_context
-def database_stats(ctx):
+def database_stats(ctx, database: Optional[str]):
     """Show database statistics."""
     
     config_obj = ctx.obj['config']
-    db_path = config_obj.get('database.path')
+    db_path = database or config_obj.get('database.path')
     
     try:
         db_manager = DatabaseManager(db_path)
@@ -325,12 +328,13 @@ def database_stats(ctx):
 
 @database.command('backup')
 @click.option('--output', '-o', help='Backup file path (optional)')
+@click.option('--database', help='Database path (overrides config)')
 @click.pass_context
-def database_backup(ctx, output: Optional[str]):
+def database_backup(ctx, output: Optional[str], database: Optional[str]):
     """Create database backup."""
     
     config_obj = ctx.obj['config']
-    db_path = config_obj.get('database.path')
+    db_path = database or config_obj.get('database.path')
     
     try:
         db_manager = DatabaseManager(db_path)
@@ -345,12 +349,13 @@ def database_backup(ctx, output: Optional[str]):
 @database.command('cleanup')
 @click.option('--days', default=30, help='Keep data from last N days (default: 30)')
 @click.option('--vacuum', is_flag=True, help='Vacuum database after cleanup')
+@click.option('--database', help='Database path (overrides config)')
 @click.pass_context
-def database_cleanup(ctx, days: int, vacuum: bool):
+def database_cleanup(ctx, days: int, vacuum: bool, database: Optional[str]):
     """Clean up old data from database."""
     
     config_obj = ctx.obj['config']
-    db_path = config_obj.get('database.path')
+    db_path = database or config_obj.get('database.path')
     
     try:
         db_manager = DatabaseManager(db_path)
@@ -366,6 +371,207 @@ def database_cleanup(ctx, days: int, vacuum: bool):
         
     except Exception as e:
         click.echo(f"Database cleanup failed: {e}", err=True)
+        sys.exit(1)
+
+
+@database.command('init')
+@click.option('--production', is_flag=True, help='Create production database')
+@click.option('--db-path', help='Database path (overrides default naming)')
+@click.pass_context
+def database_init(ctx, production: bool, db_path: Optional[str]):
+    """Initialize a new database (development or production)."""
+    
+    config_obj = ctx.obj['config']
+    
+    # Determine database path
+    if db_path:
+        target_path = db_path
+    elif production:
+        target_path = "production_remarkable.db"
+    else:
+        target_path = config_obj.get('database.path', 'remarkable_pipeline.db')
+    
+    # Check if database already exists
+    if os.path.exists(target_path):
+        env_type = "production" if production else "development"
+        if not click.confirm(f"Database already exists at {target_path}. Overwrite?"):
+            click.echo("Database initialization cancelled")
+            sys.exit(0)
+        
+        # Create backup of existing database
+        backup_path = f"{target_path}.backup"
+        shutil.copy2(target_path, backup_path)
+        click.echo(f"Existing database backed up to {backup_path}")
+    
+    try:
+        # Initialize new database
+        db_manager = DatabaseManager(target_path)
+        
+        env_type = "production" if production else "development"
+        click.echo(f"✅ {env_type.title()} database initialized: {target_path}")
+        
+        # Show stats
+        stats = db_manager.get_database_stats()
+        click.echo(f"Database size: {stats['database_size_mb']:.2f} MB")
+        click.echo(f"Tables: {len(stats['tables'])}")
+        
+        if production:
+            click.echo("\n💡 Production database ready for use!")
+            click.echo(f"   Use --database {target_path} with other commands")
+            click.echo(f"   Or update your config: database.path: {target_path}")
+        
+    except Exception as e:
+        click.echo(f"Failed to initialize database: {e}", err=True)
+        sys.exit(1)
+
+
+@database.command('switch')
+@click.option('--to', 'target_env', type=click.Choice(['development', 'production']), 
+              help='Switch to environment (development or production)')
+@click.option('--path', help='Switch to specific database path')
+@click.pass_context
+def database_switch(ctx, target_env: Optional[str], path: Optional[str]):
+    """Switch default database environment."""
+    
+    config_obj = ctx.obj['config']
+    current_path = config_obj.get('database.path')
+    
+    if path:
+        new_path = path
+    elif target_env == 'production':
+        new_path = "production_remarkable.db"
+    elif target_env == 'development':
+        new_path = "remarkable_pipeline.db"
+    else:
+        click.echo("Must specify --to environment or --path", err=True)
+        sys.exit(1)
+    
+    if not os.path.exists(new_path):
+        click.echo(f"Database not found: {new_path}", err=True)
+        click.echo(f"Use 'database init' to create it first")
+        sys.exit(1)
+    
+    try:
+        # Update configuration 
+        config_obj.set('database.path', new_path)
+        
+        # Save to config file if it exists
+        if config_obj.config_path:
+            with open(config_obj.config_path, 'r') as f:
+                config_data = yaml.safe_load(f) or {}
+            
+            # Update the database path
+            if 'database' not in config_data:
+                config_data['database'] = {}
+            config_data['database']['path'] = new_path
+            
+            with open(config_obj.config_path, 'w') as f:
+                yaml.dump(config_data, f, default_flow_style=False, indent=2)
+        
+        env_name = target_env or "custom"
+        click.echo(f"✅ Switched to {env_name} database: {new_path}")
+        
+        # Show stats for the new database
+        db_manager = DatabaseManager(new_path)
+        stats = db_manager.get_database_stats()
+        click.echo(f"Database size: {stats['database_size_mb']:.2f} MB")
+        click.echo(f"Recent events (24h): {stats['recent_events_24h']}")
+        
+    except Exception as e:
+        click.echo(f"Failed to switch database: {e}", err=True)
+        sys.exit(1)
+
+
+@database.command('list-environments')
+@click.pass_context
+def database_list_environments(ctx):
+    """List available database environments."""
+    
+    config_obj = ctx.obj['config']
+    current_path = config_obj.get('database.path')
+    
+    click.echo("Available database environments:")
+    
+    # Standard database files
+    databases = [
+        ('development', 'remarkable_pipeline.db'),
+        ('production', 'production_remarkable.db'),
+    ]
+    
+    # Add current path if it's different
+    if current_path not in [db[1] for db in databases]:
+        databases.append(('current', current_path))
+    
+    for env_name, db_path in databases:
+        if os.path.exists(db_path):
+            try:
+                db_manager = DatabaseManager(db_path)
+                stats = db_manager.get_database_stats()
+                size_mb = stats['database_size_mb']
+                tables = len(stats['tables'])
+                recent_events = stats['recent_events_24h']
+                
+                status = "✅"
+                marker = " (current)" if db_path == current_path else ""
+                
+                click.echo(f"  {status} {env_name}{marker}: {db_path}")
+                click.echo(f"      Size: {size_mb:.2f} MB, Tables: {tables}, Recent events: {recent_events}")
+                
+            except Exception as e:
+                click.echo(f"  ❌ {env_name}: {db_path} (error: {e})")
+        else:
+            click.echo(f"  ⚪ {env_name}: {db_path} (not found)")
+    
+    click.echo(f"\nCurrent default: {current_path}")
+
+
+@database.command('recent-activity')
+@click.option('--database', help='Database path (overrides config)')
+@click.option('--limit', default=10, help='Number of recent events to show (default: 10)')
+@click.pass_context
+def database_recent_activity(ctx, database: Optional[str], limit: int):
+    """Show recent database activity."""
+    
+    config_obj = ctx.obj['config']
+    db_path = database or config_obj.get('database.path')
+    
+    try:
+        db_manager = DatabaseManager(db_path)
+        
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get recent processing results
+            cursor.execute('''
+                SELECT pr.created_at, pr.processor_type, pr.success, pr.error_message,
+                       pr.processing_time_ms, f.file_path
+                FROM processing_results pr
+                JOIN files f ON pr.file_id = f.id
+                ORDER BY pr.created_at DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            results = cursor.fetchall()
+            
+            if results:
+                click.echo(f"Recent processing activity ({len(results)} events):")
+                click.echo()
+                
+                for created_at, processor_type, success, error_msg, time_ms, file_path in results:
+                    status = "✅" if success else "❌"
+                    file_name = os.path.basename(file_path) if file_path else "Unknown"
+                    time_str = f"{time_ms}ms" if time_ms else "N/A"
+                    
+                    click.echo(f"{status} {created_at} - {processor_type}")
+                    click.echo(f"   File: {file_name} ({time_str})")
+                    if not success and error_msg:
+                        click.echo(f"   Error: {error_msg}")
+                    click.echo()
+            else:
+                click.echo("No recent processing activity found")
+        
+    except Exception as e:
+        click.echo(f"Failed to get recent activity: {e}", err=True)
         sys.exit(1)
 
 
@@ -684,9 +890,12 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
                     from ..core.notebook_paths import update_notebook_metadata
                     from ..core.database import DatabaseManager
                     
+                    # Get data directory from config
+                    data_dir = config_obj.get('remarkable.data_directory', './data')
+                    
                     db_manager = DatabaseManager(db_path)
                     with db_manager.get_connection() as conn:
-                        updated_count = update_notebook_metadata(metadata_dir, conn)
+                        updated_count = update_notebook_metadata(metadata_dir, conn, data_dir)
                     
                     click.echo(f"✅ Updated {updated_count} notebook metadata records")
                 except Exception as e:
@@ -1056,6 +1265,7 @@ def _find_remarkable_sync_directory(config_obj, fallback_dir: str) -> Optional[s
 @click.option('--output-dir', help='Directory to save extracted text files')
 @click.option('--export-highlights', help='Export highlights to CSV file')
 @click.option('--export-text', help='Export extracted text to CSV file')
+@click.option('--database', help='Database path (overrides config)')
 @click.option('--language', default='en', help='OCR language (default: en)')
 @click.option('--confidence', default=0.7, type=float, help='Minimum confidence threshold (default: 0.7)')
 @click.option('--format', 'output_format', type=click.Choice(['txt', 'md', 'json', 'csv']), default='md', help='Output format for text files (default: md)')
@@ -1065,7 +1275,7 @@ def _find_remarkable_sync_directory(config_obj, fallback_dir: str) -> Optional[s
 @click.option('--skip-metadata-update', is_flag=True, help='Skip automatic metadata update (faster but may use stale data)')
 @click.pass_context
 def process_all(ctx, directory: str, output_dir: Optional[str], export_highlights: Optional[str], 
-                export_text: Optional[str], language: str, confidence: float, output_format: str,
+                export_text: Optional[str], database: Optional[str], language: str, confidence: float, output_format: str,
                 enhanced_highlights: bool, include_pdf_epub: bool, max_pages: Optional[int],
                 skip_metadata_update: bool):
     """Process directory with both handwritten text extraction AND highlight extraction."""
@@ -1075,7 +1285,7 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
         sys.exit(1)
     
     config_obj = ctx.obj['config']
-    db_path = config_obj.get('database.path')
+    db_path = database or config_obj.get('database.path')
     
     try:
         click.echo("🚀 Starting combined processing: handwritten notes + PDF/EPUB highlights")
@@ -1101,8 +1311,11 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
                 try:
                     from ..core.notebook_paths import update_notebook_metadata
                     
+                    # Get data directory from config  
+                    data_dir = config_obj.get('remarkable.data_directory', './data')
+                    
                     with db_manager.get_connection() as conn:
-                        updated_count = update_notebook_metadata(metadata_dir, conn)
+                        updated_count = update_notebook_metadata(metadata_dir, conn, data_dir)
                     
                     click.echo(f"✅ Updated {updated_count} notebook metadata records")
                 except Exception as e:
@@ -1240,8 +1453,11 @@ def update_notebook_paths(ctx, remarkable_dir: Optional[str]):
         
         click.echo(f"📂 Scanning reMarkable directory: {remarkable_dir}")
         
+        # Get data directory from config
+        data_dir = config_obj.get('remarkable.data_directory', './data')
+        
         with db_manager.get_connection() as conn:
-            updated_count = update_notebook_metadata(remarkable_dir, conn)
+            updated_count = update_notebook_metadata(remarkable_dir, conn, data_dir)
         
         click.echo(f"✅ Updated {updated_count} notebook metadata records in database")
         
@@ -1328,11 +1544,12 @@ def export_data(ctx, output: str, enhanced: bool, ocr: bool, title: Optional[str
 @cli.command('watch')
 @click.option('--source-directory', help='reMarkable app directory to watch (overrides config)')
 @click.option('--local-directory', help='Local sync directory (overrides config)')
+@click.option('--database', help='Database path (overrides config)')
 @click.option('--sync-on-startup', is_flag=True, default=True, help='Perform initial sync on startup')
 @click.option('--process-immediately', is_flag=True, default=True, help='Process files immediately after sync')
 @click.pass_context
 def watch_directory(ctx, source_directory: Optional[str], local_directory: Optional[str], 
-                   sync_on_startup: bool, process_immediately: bool):
+                   database: Optional[str], sync_on_startup: bool, process_immediately: bool):
     """Watch reMarkable directory for changes and process automatically with two-tier system."""
     
     config_obj = ctx.obj['config']
@@ -1346,6 +1563,8 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
         config_obj.set('remarkable.source_directory', source_directory)
     if local_directory:
         config_obj.set('remarkable.local_sync_directory', local_directory)
+    if database:
+        config_obj.set('database.path', database)
     
     # Validate configuration
     source_dir = config_obj.get('remarkable.source_directory')

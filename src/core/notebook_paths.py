@@ -5,10 +5,13 @@ Handles building and storing folder hierarchy from .metadata files.
 
 import json
 import logging
+import zipfile
+import shutil
 from pathlib import Path
 from typing import Dict, Optional, List
 from dataclasses import dataclass
 import sqlite3
+from xml.etree import ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,10 @@ class RemarkableItem:
     parent: Optional[str]
     item_type: str  # 'CollectionType' for folders, 'DocumentType' for documents
     document_type: str = 'unknown'  # 'notebook', 'pdf', 'epub', 'folder', 'unknown'
+    authors: Optional[str] = None  # For EPUB/PDF: comma-separated author names
+    publisher: Optional[str] = None  # For EPUB/PDF: publisher name
+    publication_date: Optional[str] = None  # For EPUB/PDF: publication date (ISO format)
+    cover_image_path: Optional[str] = None  # For EPUB/PDF: path to extracted cover image
     last_modified: Optional[str] = None
     last_opened: Optional[str] = None
     last_opened_page: Optional[int] = None
@@ -32,28 +39,30 @@ class RemarkableItem:
 class NotebookPathManager:
     """Manages reMarkable notebook folder paths and database integration."""
     
-    def __init__(self, remarkable_dir: str, db_connection=None):
+    def __init__(self, remarkable_dir: str, db_connection=None, data_dir: str = None):
         self.remarkable_dir = Path(remarkable_dir)
         self.db_connection = db_connection
+        self.data_dir = Path(data_dir) if data_dir else Path('/data')
         self.items: Dict[str, RemarkableItem] = {}
         self.paths_cache: Dict[str, str] = {}
     
-    def _get_document_type(self, uuid: str) -> str:
+    def _get_document_metadata(self, uuid: str) -> tuple[str, Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
-        Determine the actual document type by reading .content file.
+        Extract document type and metadata by reading .content file.
         
         Returns:
-            'notebook' - handwritten notebook
-            'pdf' - PDF document
-            'epub' - EPUB document  
-            'folder' - collection/folder
-            'unknown' - cannot determine
+            Tuple of (document_type, authors, publisher, publication_date, cover_image_path)
+            - document_type: 'notebook', 'pdf', 'epub', 'folder', 'unknown'
+            - authors: comma-separated author names (for EPUB/PDF)
+            - publisher: publisher name (for EPUB/PDF) 
+            - publication_date: ISO date string (for EPUB/PDF)
+            - cover_image_path: path to extracted cover image (for EPUB/PDF)
         """
         # Check if it's a folder first (no .content file)
         content_file = self.remarkable_dir / f"{uuid}.content"
         
         if not content_file.exists():
-            return 'folder'
+            return 'folder', None, None, None, None
         
         try:
             with open(content_file, 'r') as f:
@@ -63,20 +72,206 @@ class NotebookPathManager:
             
             if file_type == '':
                 # Empty fileType usually means handwritten notebook
-                return 'notebook'
+                return 'notebook', None, None, None, None
             elif file_type == 'notebook':
-                return 'notebook'  
+                return 'notebook', None, None, None, None
             elif file_type == 'pdf':
-                return 'pdf'
+                # PDF files might have documentMetadata too
+                authors, publisher, pub_date = self._extract_document_metadata(content_data)
+                # TODO: Implement PDF cover extraction if needed
+                return 'pdf', authors, publisher, pub_date, None
             elif file_type == 'epub':
-                return 'epub'
+                # Extract EPUB metadata and cover from documentMetadata block
+                authors, publisher, pub_date = self._extract_document_metadata(content_data)
+                cover_path = self._extract_epub_cover(uuid)
+                return 'epub', authors, publisher, pub_date, cover_path
             else:
                 logger.debug(f"Unknown fileType '{file_type}' for {uuid}")
-                return 'unknown'
+                return 'unknown', None, None, None, None
                 
         except Exception as e:
             logger.debug(f"Could not read content file for {uuid}: {e}")
-            return 'unknown'
+            return 'unknown', None, None, None, None
+
+    def _extract_document_metadata(self, content_data: Dict) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        Extract authors, publisher, and publication date from documentMetadata.
+        
+        Returns:
+            Tuple of (authors, publisher, publication_date)
+        """
+        document_metadata = content_data.get('documentMetadata', {})
+        
+        # Extract authors - handle list format
+        authors = None
+        if 'authors' in document_metadata:
+            authors_list = document_metadata['authors']
+            if isinstance(authors_list, list) and authors_list:
+                # Join multiple authors with comma
+                authors = ', '.join(str(author) for author in authors_list)
+            elif isinstance(authors_list, str):
+                authors = authors_list
+        
+        # Extract publisher
+        publisher = document_metadata.get('publisher')
+        if publisher and isinstance(publisher, str):
+            publisher = publisher.strip()
+        else:
+            publisher = None
+        
+        # Extract publication date
+        publication_date = document_metadata.get('publicationDate')
+        if publication_date and isinstance(publication_date, str):
+            # Keep ISO format but clean it up
+            try:
+                # Parse and reformat to clean ISO date
+                from datetime import datetime
+                dt = datetime.fromisoformat(publication_date.replace('Z', '+00:00'))
+                publication_date = dt.strftime('%Y-%m-%d')
+            except:
+                # If parsing fails, keep original format
+                publication_date = publication_date.strip()
+        else:
+            publication_date = None
+        
+        return authors, publisher, publication_date
+
+    def _extract_epub_cover(self, uuid: str) -> Optional[str]:
+        """
+        Extract cover image from EPUB file and save it to covers directory.
+        
+        Returns:
+            Path to extracted cover image file, or None if no cover found
+        """
+        epub_file = self.remarkable_dir / f"{uuid}.epub"
+        
+        if not epub_file.exists():
+            logger.debug(f"EPUB file not found for {uuid}")
+            return None
+        
+        try:
+            # Create covers directory in data directory
+            covers_dir = self.data_dir / "covers"
+            covers_dir.mkdir(parents=True, exist_ok=True)
+            
+            with zipfile.ZipFile(epub_file, 'r') as epub_zip:
+                # Strategy 1: Look for files named "cover.*" in root
+                for file_path in epub_zip.namelist():
+                    filename = Path(file_path).name.lower()
+                    if filename.startswith('cover.') and filename.split('.')[-1] in ['jpg', 'jpeg', 'png', 'gif']:
+                        cover_filename = f"{uuid}_cover.{filename.split('.')[-1]}"
+                        cover_path = covers_dir / cover_filename
+                        
+                        with epub_zip.open(file_path) as cover_file:
+                            with open(cover_path, 'wb') as output_file:
+                                shutil.copyfileobj(cover_file, output_file)
+                        
+                        logger.debug(f"Extracted cover image for {uuid}: {cover_filename}")
+                        return str(cover_path)
+                
+                # Strategy 2: Parse OPF file for cover references
+                cover_path = self._find_cover_from_opf(epub_zip, uuid, covers_dir)
+                if cover_path:
+                    return cover_path
+                
+                # Strategy 3: Find largest image file
+                cover_path = self._find_largest_image(epub_zip, uuid, covers_dir)
+                if cover_path:
+                    return cover_path
+                
+                logger.debug(f"No cover image found for EPUB {uuid}")
+                return None
+                
+        except Exception as e:
+            logger.debug(f"Error extracting cover for {uuid}: {e}")
+            return None
+
+    def _find_cover_from_opf(self, epub_zip: zipfile.ZipFile, uuid: str, covers_dir: Path) -> Optional[str]:
+        """Find cover image by parsing OPF manifest file."""
+        try:
+            # Find OPF file
+            opf_files = [f for f in epub_zip.namelist() if f.endswith('.opf')]
+            if not opf_files:
+                return None
+            
+            opf_content = epub_zip.read(opf_files[0]).decode('utf-8')
+            root = ET.fromstring(opf_content)
+            
+            # Define namespace
+            ns = {'': 'http://www.idpf.org/2007/opf'}
+            
+            # Look for cover metadata
+            cover_id = None
+            for meta in root.findall('.//meta[@name="cover"]', ns):
+                cover_id = meta.get('content')
+                break
+            
+            if cover_id:
+                # Find the item with matching id in manifest
+                for item in root.findall('.//item', ns):
+                    if item.get('id') == cover_id:
+                        href = item.get('href')
+                        if href:
+                            # Resolve relative path
+                            opf_dir = str(Path(opf_files[0]).parent)
+                            if opf_dir == '.':
+                                cover_file_path = href
+                            else:
+                                cover_file_path = f"{opf_dir}/{href}"
+                            
+                            # Extract the cover
+                            if cover_file_path in epub_zip.namelist():
+                                ext = Path(href).suffix.lower()
+                                if ext in ['.jpg', '.jpeg', '.png', '.gif']:
+                                    cover_filename = f"{uuid}_cover{ext}"
+                                    cover_path = covers_dir / cover_filename
+                                    
+                                    with epub_zip.open(cover_file_path) as cover_file:
+                                        with open(cover_path, 'wb') as output_file:
+                                            shutil.copyfileobj(cover_file, output_file)
+                                    
+                                    logger.debug(f"Extracted cover from OPF for {uuid}: {cover_filename}")
+                                    return str(cover_path)
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error parsing OPF for cover: {e}")
+            return None
+
+    def _find_largest_image(self, epub_zip: zipfile.ZipFile, uuid: str, covers_dir: Path) -> Optional[str]:
+        """Find the largest image file as fallback cover."""
+        try:
+            largest_image = None
+            largest_size = 0
+            
+            for file_path in epub_zip.namelist():
+                if Path(file_path).suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif']:
+                    try:
+                        file_info = epub_zip.getinfo(file_path)
+                        if file_info.file_size > largest_size:
+                            largest_size = file_info.file_size
+                            largest_image = file_path
+                    except:
+                        continue
+            
+            if largest_image and largest_size > 10000:  # At least 10KB
+                ext = Path(largest_image).suffix.lower()
+                cover_filename = f"{uuid}_cover{ext}"
+                cover_path = covers_dir / cover_filename
+                
+                with epub_zip.open(largest_image) as cover_file:
+                    with open(cover_path, 'wb') as output_file:
+                        shutil.copyfileobj(cover_file, output_file)
+                
+                logger.debug(f"Extracted largest image as cover for {uuid}: {cover_filename}")
+                return str(cover_path)
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error finding largest image: {e}")
+            return None
 
     def scan_metadata_files(self) -> None:
         """Scan all .metadata files in the reMarkable directory and determine document types."""
@@ -91,8 +286,8 @@ class NotebookPathManager:
                 with open(metadata_file, 'r') as f:
                     metadata = json.load(f)
                 
-                # Determine document type
-                document_type = self._get_document_type(uuid)
+                # Extract document type and metadata
+                document_type, authors, publisher, publication_date, cover_image_path = self._get_document_metadata(uuid)
                 
                 item = RemarkableItem(
                     uuid=uuid,
@@ -100,6 +295,10 @@ class NotebookPathManager:
                     parent=metadata.get('parent', ''),  # Empty string means root
                     item_type=metadata.get('type', 'Unknown'),
                     document_type=document_type,
+                    authors=authors,
+                    publisher=publisher,
+                    publication_date=publication_date,
+                    cover_image_path=cover_image_path,
                     last_modified=metadata.get('lastModified'),
                     last_opened=metadata.get('lastOpened'),
                     last_opened_page=metadata.get('lastOpenedPage'),
@@ -115,7 +314,15 @@ class NotebookPathManager:
                     
                 self.items[uuid] = item
                 
-                logger.debug(f"Loaded: {item.visible_name} (UUID: {uuid[:8]}..., Type: {document_type}, Parent: {item.parent[:8] if item.parent else 'ROOT'})")
+                metadata_info = f"Type: {document_type}"
+                if authors:
+                    metadata_info += f", Author: {authors}"
+                if publisher:
+                    metadata_info += f", Publisher: {publisher}"
+                if publication_date:
+                    metadata_info += f", Date: {publication_date}"
+                
+                logger.debug(f"Loaded: {item.visible_name} (UUID: {uuid[:8]}..., {metadata_info}, Parent: {item.parent[:8] if item.parent else 'ROOT'})")
                 
             except Exception as e:
                 logger.warning(f"Error reading {metadata_file}: {e}")
@@ -183,6 +390,10 @@ class NotebookPathManager:
                     parent_uuid TEXT,
                     item_type TEXT NOT NULL,
                     document_type TEXT NOT NULL DEFAULT 'unknown',
+                    authors TEXT,
+                    publisher TEXT,
+                    publication_date TEXT,
+                    cover_image_path TEXT,
                     last_modified TEXT,
                     last_opened TEXT,
                     last_opened_page INTEGER,
@@ -195,13 +406,22 @@ class NotebookPathManager:
                 )
             ''')
             
-            # Add document_type column to existing databases if it doesn't exist
-            try:
-                cursor.execute('ALTER TABLE notebook_metadata ADD COLUMN document_type TEXT DEFAULT "unknown"')
-                logger.info("Added document_type column to existing notebook_metadata table")
-            except:
-                # Column already exists, ignore
-                pass
+            # Add new columns to existing databases if they don't exist
+            new_columns = [
+                ('document_type', 'TEXT DEFAULT "unknown"'),
+                ('authors', 'TEXT'),
+                ('publisher', 'TEXT'), 
+                ('publication_date', 'TEXT'),
+                ('cover_image_path', 'TEXT')
+            ]
+            
+            for column_name, column_def in new_columns:
+                try:
+                    cursor.execute(f'ALTER TABLE notebook_metadata ADD COLUMN {column_name} {column_def}')
+                    logger.debug(f"Added {column_name} column to existing notebook_metadata table")
+                except:
+                    # Column already exists, ignore
+                    pass
             
             # Create indexes for faster lookups
             cursor.execute('''
@@ -240,8 +460,9 @@ class NotebookPathManager:
                 cursor.execute('''
                     INSERT INTO notebook_metadata 
                     (notebook_uuid, visible_name, full_path, parent_uuid, item_type, document_type,
+                     authors, publisher, publication_date, cover_image_path,
                      last_modified, last_opened, last_opened_page, deleted, pinned, synced, version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     uuid,
                     item.visible_name,
@@ -249,6 +470,10 @@ class NotebookPathManager:
                     item.parent,
                     item.item_type,
                     item.document_type,
+                    item.authors,
+                    item.publisher,
+                    item.publication_date,
+                    item.cover_image_path,
                     item.last_modified,
                     item.last_opened,
                     item.last_opened_page,
@@ -310,9 +535,9 @@ class NotebookPathManager:
         
         return documents
 
-def update_notebook_metadata(remarkable_dir: str, db_connection) -> int:
+def update_notebook_metadata(remarkable_dir: str, db_connection, data_dir: str = None) -> int:
     """Convenience function to update notebook metadata in database."""
-    manager = NotebookPathManager(remarkable_dir, db_connection)
+    manager = NotebookPathManager(remarkable_dir, db_connection, data_dir)
     return manager.update_database_metadata()
 
 def get_notebook_path(notebook_uuid: str, db_connection) -> Optional[str]:
