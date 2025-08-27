@@ -612,11 +612,15 @@ def process_directory(ctx, directory: str, enhanced: bool, export: Optional[str]
             language = config_obj.get('ocr.language', 'en')
             confidence = config_obj.get('ocr.confidence_threshold', 0.7)
             
+            # Get exclusion configuration
+            exclude_notebooks = config_obj.get('remarkable.exclude_notebooks', {})
+            
             results = extract_text_from_directory(
                 directory, 
                 db_path=db_path,
                 language=language,
-                confidence_threshold=confidence
+                confidence_threshold=confidence,
+                exclude_notebooks=exclude_notebooks
             )
             _display_text_extraction_results(results)
         elif enhanced:
@@ -907,6 +911,9 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
             
             click.echo()
         
+        # Get exclusion configuration
+        exclude_notebooks = config_obj.get('remarkable.exclude_notebooks', {})
+        
         results = extract_text_from_directory(
             directory,
             output_dir=output_dir,
@@ -916,7 +923,8 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
             output_format=output_format,
             include_pdf_epub=include_pdf_epub,
             max_pages=max_pages,
-            notebook_list=notebook_list
+            notebook_list=notebook_list,
+            exclude_notebooks=exclude_notebooks
         )
         
         _display_text_extraction_results(results)
@@ -1332,6 +1340,10 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
         
         # Step 1: Extract handwritten text
         click.echo("📝 Step 1: Extracting handwritten text from notebooks...")
+        
+        # Get exclusion configuration
+        exclude_notebooks = config_obj.get('remarkable.exclude_notebooks', {})
+        
         text_results = extract_text_from_directory(
             directory,
             output_dir=output_dir,
@@ -1340,7 +1352,8 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
             confidence_threshold=confidence,
             output_format=output_format,
             include_pdf_epub=include_pdf_epub,
-            max_pages=max_pages
+            max_pages=max_pages,
+            exclude_notebooks=exclude_notebooks
         )
         
         click.echo(f"✅ Text extraction completed: {len([r for r in text_results.values() if r.success])} notebooks processed")

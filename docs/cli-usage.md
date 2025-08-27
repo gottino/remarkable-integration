@@ -439,6 +439,42 @@ remarkable:
   data_directory: "./data"  # Cover images stored in ./data/covers/
 ```
 
+## Notebook Exclusion
+
+Skip specific notebooks during text extraction to improve performance and avoid processing template files:
+
+### Configuration Examples
+```yaml
+remarkable:
+  exclude_notebooks:
+    # Skip by name patterns (supports wildcards)
+    names:
+      - "Quicksheets"        # Default template notebook
+      - "Template*"          # Any notebook starting with "Template"
+      - "*Draft*"            # Any notebook containing "Draft"
+    # Skip by exact UUIDs (for precise control)
+    uuids:
+      - "4d731519-084d-4c44-bb74-0f82a6e9f07c"  # Specific Quicksheets UUID
+```
+
+### Usage Examples
+```bash
+# All text extraction commands automatically respect exclusion config
+poetry run python -m src.cli.main text extract "/path/to/data"
+
+# Process-all command also respects exclusions  
+poetry run python -m src.cli.main process-all "/path/to/data" --output-dir "notes"
+
+# View what would be excluded (check logs)
+poetry run python -m src.cli.main -v text extract "/path/to/data"
+```
+
+### Common Use Cases
+- **Skip template notebooks**: Exclude "Quicksheets", "Template Notes"
+- **Avoid draft content**: Skip notebooks with "*Draft*", "*WIP*" patterns
+- **Exclude test files**: Skip "Test*" notebooks during production processing
+- **Performance optimization**: Skip large template files to speed up processing
+
 ### Database Query Examples
 ```bash
 # View all EPUB metadata

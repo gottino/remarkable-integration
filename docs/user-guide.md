@@ -173,6 +173,42 @@ remarkable:
   data_directory: "/data"
 ```
 
+### Notebook Exclusion
+
+Skip specific notebooks from processing to save time and avoid template files:
+
+```yaml
+remarkable:
+  # Exclude notebooks from processing (by name patterns or UUIDs)
+  exclude_notebooks:
+    # Exclude by visible name (supports wildcards)
+    names:
+      - "Quicksheets"        # Exact name match
+      - "Template*"          # Starts with "Template"
+      - "*Draft*"            # Contains "Draft"
+      - "Test Notebook"      # Another exact match
+    # Exclude by specific UUIDs (for exact targeting)
+    uuids:
+      - "4d731519-084d-4c44-bb74-0f82a6e9f07c"  # Your Quicksheets UUID
+      - "abc123def456..."     # Another specific notebook
+```
+
+**Common Exclusion Patterns:**
+- **Template notebooks**: `"Quicksheets"`, `"Template*"`
+- **Draft content**: `"*Draft*"`, `"*WIP*"`
+- **Test notebooks**: `"Test*"`, `"*Testing*"`
+- **Temporary files**: `"Temp*"`, `"*Temp"`
+
+**Default Behavior:**
+- By default, `"Quicksheets"` is automatically excluded
+- If no `exclude_notebooks` is configured, only Quicksheets is skipped
+- Empty configuration `exclude_notebooks: {}` processes all notebooks
+
+**Exclusion Methods:**
+1. **Name patterns**: Use `*` wildcards for flexible matching
+2. **Exact UUIDs**: For precise exclusion of specific notebooks
+3. **Combined approach**: Mix name patterns and UUIDs as needed
+
 ## 📁 Understanding reMarkable Data
 
 ### Finding Your Data

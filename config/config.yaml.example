@@ -14,6 +14,17 @@ remarkable:
   # This is where processed data like cover images and extracted text are stored
   data_directory: "./data"
   
+  # Exclude notebooks from processing (by name patterns or UUIDs)
+  exclude_notebooks:
+    # Exclude by visible name (supports wildcards)
+    names:
+      - "Quicksheets"
+      - "Template*"
+      - "*Draft*"
+    # Exclude by specific UUIDs
+    uuids:
+      - "4d731519-084d-4c44-bb74-0f82a6e9f07c"  # Your specific Quicksheets UUID
+  
   # Legacy: Path to reMarkable sync directory (deprecated - use source_directory instead)
   sync_directory: null
   
@@ -122,6 +133,9 @@ logging:
 #   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
 #   local_sync_directory: "./data/remarkable_sync"
 #   data_directory: "./data"
+#   exclude_notebooks:
+#     names: ["Quicksheets", "Template*"]
+#     uuids: ["4d731519-084d-4c44-bb74-0f82a6e9f07c"]
 #   sync_debounce_seconds: 30
 # 
 # Basic setup (Windows):

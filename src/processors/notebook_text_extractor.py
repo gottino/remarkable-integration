@@ -17,6 +17,7 @@ import json
 import logging
 import sqlite3
 import tempfile
+import fnmatch
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from pathlib import Path
@@ -322,7 +323,8 @@ class NotebookTextExtractor:
         language: str = 'en',
         confidence_threshold: float = 0.7,
         enable_gpu: bool = False,
-        temp_dir: Optional[str] = None
+        temp_dir: Optional[str] = None,
+        exclude_notebooks: Optional[Dict] = None
     ):
         """
         Initialize the notebook text extractor.
@@ -334,11 +336,17 @@ class NotebookTextExtractor:
             confidence_threshold: Minimum confidence for text recognition
             enable_gpu: Whether to use GPU acceleration (if available)
             temp_dir: Temporary directory for PDF conversion
+            exclude_notebooks: Dict with 'names' and 'uuids' lists for exclusion
         """
         self.data_directory = data_directory
         self.db_connection = db_connection
         self.db_manager = db_manager
         self.temp_dir = temp_dir or tempfile.gettempdir()
+        
+        # Set up notebook exclusion rules
+        self.exclude_notebooks = exclude_notebooks or {}
+        self.exclude_names = self.exclude_notebooks.get('names', ['Quicksheets'])  # Default exclude Quicksheets
+        self.exclude_uuids = self.exclude_notebooks.get('uuids', [])
         
         # Initialize components
         # Note: rm_parser will be initialized per directory in process_directory()
@@ -410,6 +418,30 @@ class NotebookTextExtractor:
         """Check if the extractor is ready to process files."""
         return self.ocr_engine.is_available()
     
+    def _should_exclude_notebook(self, notebook_uuid: str, notebook_name: str) -> bool:
+        """
+        Check if a notebook should be excluded from processing.
+        
+        Args:
+            notebook_uuid: The UUID of the notebook
+            notebook_name: The visible name of the notebook
+            
+        Returns:
+            True if the notebook should be excluded, False otherwise
+        """
+        # Check UUID exclusions
+        if notebook_uuid in self.exclude_uuids:
+            logger.info(f"Excluding notebook '{notebook_name}' by UUID: {notebook_uuid}")
+            return True
+        
+        # Check name pattern exclusions
+        for pattern in self.exclude_names:
+            if fnmatch.fnmatch(notebook_name, pattern):
+                logger.info(f"Excluding notebook '{notebook_name}' by name pattern: {pattern}")
+                return True
+        
+        return False
+    
     def find_notebooks(self, input_path: str) -> List[Dict[str, Any]]:
         """Find all notebook documents in the given path."""
         input_path = Path(input_path)
@@ -425,6 +457,10 @@ class NotebookTextExtractor:
                 if metadata.get('type') == 'DocumentType':
                     uuid = metadata_file.stem
                     doc_name = metadata.get('visibleName', uuid)
+                    
+                    # Check if this notebook should be excluded
+                    if self._should_exclude_notebook(uuid, doc_name):
+                        continue
                     
                     # Check if this document has a .content file (indicates it's a notebook)
                     content_file = metadata_file.with_suffix('.content')
@@ -1463,7 +1499,8 @@ def extract_text_from_directory(
     output_format: str = 'md',
     include_pdf_epub: bool = False,
     max_pages: Optional[int] = None,
-    notebook_list: Optional[str] = None
+    notebook_list: Optional[str] = None,
+    exclude_notebooks: Optional[Dict] = None
 ) -> Dict[str, NotebookTextResult]:
     """
     Standalone function to extract text from all notebooks in a directory.
@@ -1478,6 +1515,7 @@ def extract_text_from_directory(
         include_pdf_epub: Include notebooks with associated PDF/EPUB files
         max_pages: Maximum pages to process per notebook (for testing)
         notebook_list: Path to file containing notebook UUIDs or names to process
+        exclude_notebooks: Dict with 'names' and 'uuids' lists for exclusion
         
     Returns:
         Dictionary mapping notebook UUIDs to results
@@ -1491,7 +1529,8 @@ def extract_text_from_directory(
             extractor = NotebookTextExtractor(
                 db_connection=conn,
                 language=language,
-                confidence_threshold=confidence_threshold
+                confidence_threshold=confidence_threshold,
+                exclude_notebooks=exclude_notebooks
             )
             
             if not extractor.is_available():
