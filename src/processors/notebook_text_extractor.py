@@ -1082,7 +1082,7 @@ class NotebookTextExtractor:
         # Filter notebooks if PDF/EPUB filtering is enabled
         if self.filter_pdf_epub:
             original_count = len(notebooks)
-            notebooks = [nb for nb in notebooks if not self._has_associated_pdf_epub(nb['uuid'], directory_path)]
+            notebooks = [nb for nb in notebooks if not self._has_associated_pdf_epub(directory_path, nb['uuid'])]
             filtered_count = original_count - len(notebooks)
             if filtered_count > 0:
                 logger.info(f"Filtered out {filtered_count} notebooks with associated PDF/EPUB files")
@@ -1253,18 +1253,17 @@ class NotebookTextExtractor:
     
     def _has_associated_pdf_epub(self, directory_path: str, uuid: str) -> bool:
         """Check if a notebook has an associated PDF or EPUB file."""
-        base_path = Path(directory_path) / uuid
+        base_path = Path(directory_path)
         
-        # Check for PDF files in the notebook directory
-        if base_path.exists():
-            pdf_files = list(base_path.glob("*.pdf"))
-            epub_files = list(base_path.glob("*.epub"))
-            
-            if pdf_files or epub_files:
-                return True
+        # Check for PDF/EPUB files with matching UUID in the main directory
+        pdf_file = base_path / f"{uuid}.pdf"
+        epub_file = base_path / f"{uuid}.epub"
+        
+        if pdf_file.exists() or epub_file.exists():
+            return True
         
         # Check metadata for source type (imported PDFs/EPUBs have source info)
-        metadata_file = Path(directory_path) / f"{uuid}.metadata"
+        metadata_file = base_path / f"{uuid}.metadata"
         if metadata_file.exists():
             try:
                 with open(metadata_file, 'r', encoding='utf-8') as f:
