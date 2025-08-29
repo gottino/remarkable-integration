@@ -891,8 +891,8 @@ def extract_text(ctx, directory: str, output_dir: Optional[str], language: str, 
             
             if metadata_dir:
                 try:
-                    from ..core.notebook_paths import update_notebook_metadata
-                    from ..core.database import DatabaseManager
+                    from src.core.notebook_paths import update_notebook_metadata
+                    from src.core.database import DatabaseManager
                     
                     # Get data directory from config
                     data_dir = config_obj.get('remarkable.data_directory', './data')
@@ -1317,7 +1317,7 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
             
             if metadata_dir:
                 try:
-                    from ..core.notebook_paths import update_notebook_metadata
+                    from src.core.notebook_paths import update_notebook_metadata
                     
                     # Get data directory from config  
                     data_dir = config_obj.get('remarkable.data_directory', './data')
@@ -1362,11 +1362,11 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
         click.echo("\n📖 Step 2: Extracting highlights from PDF/EPUB documents...")
         
         if enhanced_highlights:
-            from ..processors.enhanced_highlight_extractor import process_directory_enhanced
+            from src.processors.enhanced_highlight_extractor import process_directory_enhanced
             highlight_results = process_directory_enhanced(directory, db_manager)
             highlight_type = "enhanced passages"
         else:
-            from ..processors.highlight_extractor import process_directory
+            from src.processors.highlight_extractor import process_directory
             highlight_results = process_directory(directory, db_manager)
             highlight_type = "highlights"
         
@@ -1380,11 +1380,11 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
             with db_manager.get_connection() as conn:
                 if export_highlights:
                     if enhanced_highlights:
-                        from ..processors.enhanced_highlight_extractor import EnhancedHighlightExtractor
+                        from src.processors.enhanced_highlight_extractor import EnhancedHighlightExtractor
                         extractor = EnhancedHighlightExtractor(conn)
                         extractor.export_enhanced_highlights_to_csv(export_highlights)
                     else:
-                        from ..processors.highlight_extractor import HighlightExtractor
+                        from src.processors.highlight_extractor import HighlightExtractor
                         extractor = HighlightExtractor(conn)
                         extractor.export_highlights_to_csv(export_highlights)
                     click.echo(f"   ✅ Highlights exported to: {export_highlights}")
@@ -1568,8 +1568,8 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
     config_obj = ctx.obj['config']
     
     # Import here to avoid circular imports
-    from ..core.file_watcher import ReMarkableWatcher
-    from ..processors.notebook_text_extractor import NotebookTextExtractor
+    from src.core.file_watcher import ReMarkableWatcher
+    from src.processors.notebook_text_extractor import NotebookTextExtractor
     
     # Override config with command line options if provided
     if source_directory:

@@ -728,6 +728,69 @@ class EnhancedHighlightExtractor:
         
         return min(score, 1.0)
     
+    def _apply_ocr_corrections(self, text: str) -> str:
+        """Apply simple OCR corrections to fix common errors."""
+        if not text:
+            return text
+            
+        # Common OCR corrections
+        corrections = {
+            # Capital D mistakes
+            'gratiDcation': 'gratification',
+            'satisAction': 'satisfaction',
+            'relationShip': 'relationship',
+            'communicAtion': 'communication',
+            'frustrAtion': 'frustration',
+            'expectAtion': 'expectation',
+            'interAction': 'interaction',
+            'motivAtion': 'motivation',
+            'situAtion': 'situation',
+            'informAtion': 'information',
+            'creAtion': 'creation',
+            'reAction': 'reaction',
+            'educAtion': 'education',
+            'applicAtion': 'application',
+            'organizAtion': 'organization',
+            
+            # Common character substitutions
+            'rn': 'm',  # Only if rn appears in context where m makes sense
+            'cl': 'd',  # Only in specific contexts
+            'ii': 'll', # Only in specific contexts
+            'vv': 'w',  # Only in specific contexts
+            
+            # Colon/semicolon mistakes
+            'di:ering': 'differing',
+            'di;ering': 'differing',
+            'consIdering': 'considering',
+            'sImilar': 'similar',
+            'partIcular': 'particular',
+            'dIfferent': 'different',
+            'sIgnificant': 'significant',
+            'crItical': 'critical',
+            
+            # Word boundary issues
+            'inthe': 'in the',
+            'ofthe': 'of the',
+            'tothe': 'to the',
+            'andthe': 'and the',
+            'forthe': 'for the',
+            'onthe': 'on the',
+            'atthe': 'at the',
+            'withthe': 'with the',
+            
+            # Quote marks
+            '"': '"',
+            '"': '"',
+            ''': "'",
+            ''': "'",
+        }
+        
+        corrected_text = text
+        for wrong, right in corrections.items():
+            corrected_text = corrected_text.replace(wrong, right)
+            
+        return corrected_text
+    
     def _enhance_highlights(self, raw_highlights: List[RawHighlight], 
                           epub_extractor: EPUBTextExtractor, file_path: str) -> List[EnhancedHighlight]:
         """Enhance raw highlights by finding real text in EPUB."""
@@ -757,12 +820,13 @@ class EnhancedHighlightExtractor:
             elapsed = time.time() - start_time
             if elapsed > max_total_time:
                 logger.warning(f"⏰ Timeout reached ({max_total_time}s) - processing remaining {total_highlights - i} highlights without EPUB matching")
-                # Process remaining highlights without EPUB matching
+                # Process remaining highlights with OCR corrections only
                 for j in range(i, total_highlights):
                     remaining_highlight = raw_highlights[j]
+                    corrected_text = self._apply_ocr_corrections(remaining_highlight.text)
                     enhanced = EnhancedHighlight(
                         original_text=remaining_highlight.text,
-                        corrected_text=remaining_highlight.text,
+                        corrected_text=corrected_text,  # OCR-corrected text
                         page_number=remaining_highlight.page_number,
                         file_name=remaining_highlight.file_name,
                         title=doc_info.title,
@@ -790,13 +854,17 @@ class EnhancedHighlightExtractor:
                 logger.debug(f"  ❌ Error in EPUB matching: {e}")
                 match_result = None
             
+            # Apply OCR corrections to original text instead of EPUB replacement
+            corrected_text = self._apply_ocr_corrections(raw_highlight.text)
+            
+            # If we have an EPUB match, use it for confidence scoring but keep OCR-corrected original
             if match_result:
-                corrected_text, match_score, position = match_result
-                logger.debug(f"  ✅ Found match (score: {match_score:.2f})")
+                epub_text, match_score, position = match_result
+                logger.debug(f"  ✅ Found EPUB match (score: {match_score:.2f}) - using for validation")
                 
                 enhanced = EnhancedHighlight(
                     original_text=raw_highlight.text,
-                    corrected_text=corrected_text,
+                    corrected_text=corrected_text,  # OCR-corrected original text
                     page_number=raw_highlight.page_number,
                     file_name=raw_highlight.file_name,
                     title=doc_info.title,
@@ -806,11 +874,11 @@ class EnhancedHighlightExtractor:
                 )
                 enhanced_highlights.append(enhanced)
             else:
-                logger.debug(f"  ❌ No good match found - keeping original")
-                # Keep original text if no good match found
+                logger.debug(f"  ❌ No EPUB match - using OCR corrections only")
+                # Use OCR-corrected text even without EPUB match
                 enhanced = EnhancedHighlight(
                     original_text=raw_highlight.text,
-                    corrected_text=raw_highlight.text,  # Use original as fallback
+                    corrected_text=corrected_text,  # OCR-corrected original text
                     page_number=raw_highlight.page_number,
                     file_name=raw_highlight.file_name,
                     title=doc_info.title,
