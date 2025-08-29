@@ -1670,6 +1670,94 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
         sys.exit(1)
 
 
+@cli.command('sync-notion')
+@click.option('--token', 
+              help='Notion integration token (or set NOTION_TOKEN env var)')
+@click.option('--database-id', required=True,
+              help='Notion database ID where notebook pages will be created')
+@click.option('--update-existing', is_flag=True, default=True,
+              help='Update existing pages (default: True)')
+@click.option('--exclude-pattern', multiple=True,
+              help='Exclude notebooks matching these patterns (can be used multiple times)')
+@click.option('--no-ssl-verify', is_flag=True, default=False,
+              help='Disable SSL certificate verification (for corporate networks)')
+@click.option('--force-update', is_flag=True, default=False,
+              help='Force update all notebooks regardless of changes (skip incremental detection)')
+@click.pass_context
+def sync_notion(ctx, token: Optional[str], database_id: str, update_existing: bool, exclude_pattern: tuple, no_ssl_verify: bool, force_update: bool):
+    """Sync extracted notebook text to Notion database."""
+    from src.integrations.notion_sync import sync_notebooks_to_notion
+    
+    config_obj = ctx.obj['config']
+    
+    # Get Notion token
+    if not token:
+        token = os.getenv('NOTION_TOKEN')
+        if not token:
+            token = config_obj.get('integrations.notion.api_token')
+    
+    if not token:
+        click.echo("❌ Notion token required. Provide via --token, NOTION_TOKEN env var, or config file", err=True)
+        click.echo("💡 Get your token from: https://developers.notion.com/")
+        sys.exit(1)
+    
+    # Setup database
+    db_path = config_obj.get('database.path')
+    if not db_path:
+        click.echo("❌ Database path not configured. Run 'config init' first.", err=True)
+        sys.exit(1)
+    
+    db_manager = DatabaseManager(db_path)
+    
+    click.echo(f"🚀 Starting {'Smart' if not force_update else 'Full'} Notion sync...")
+    click.echo(f"📊 Database: {db_path}")
+    click.echo(f"🗂️  Notion database: {database_id}")
+    click.echo(f"🔄 Update existing: {'Yes' if update_existing else 'No'}")
+    click.echo(f"⚡ Force update: {'Yes' if force_update else 'No (smart incremental)'}")
+    
+    if exclude_pattern:
+        click.echo(f"⏭️  Exclude patterns: {', '.join(exclude_pattern)}")
+    
+    try:
+        with db_manager.get_connection() as conn:
+            # Convert tuple to list for exclude patterns
+            exclude_list = list(exclude_pattern) if exclude_pattern else ['Luzerner Todesmelodie']
+            
+            # Import and run sync
+            from src.integrations.notion_sync import NotionNotebookSync
+            
+            sync_client = NotionNotebookSync(token, database_id, verify_ssl=not no_ssl_verify)
+            synced_pages = sync_client.sync_all_notebooks(
+                conn, 
+                update_existing=update_existing,
+                exclude_patterns=exclude_list,
+                force_update=force_update
+            )
+            
+            click.echo(f"\n🎉 Sync completed successfully!")
+            click.echo(f"✅ {len(synced_pages)} notebook(s) synced to Notion")
+            
+            if synced_pages:
+                click.echo(f"\n📄 Synced notebooks:")
+                # Get notebook names for the synced UUIDs
+                cursor = conn.cursor()
+                for uuid in synced_pages.keys():
+                    cursor.execute("SELECT notebook_name FROM notebook_text_extractions WHERE notebook_uuid = ? LIMIT 1", (uuid,))
+                    result = cursor.fetchone()
+                    name = result[0] if result else f"UUID: {uuid[:8]}..."
+                    click.echo(f"   • {name}")
+            
+    except ImportError:
+        click.echo("❌ Notion integration not available. Install with: poetry add notion-client", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Sync failed: {e}", err=True)
+        if ctx.obj.get('verbose'):
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
 @cli.command('version')
 def version():
     """Show version information."""
