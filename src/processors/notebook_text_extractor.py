@@ -41,12 +41,15 @@ class NotebookProcessingResult:
     todos: List['TodoItem'] = None
     error_message: str = None
     processing_time_ms: int = None
+    processed_page_numbers: set = None  # Pages that were actually processed (not skipped)
     
     def __post_init__(self):
         if self.pages is None:
             self.pages = []
         if self.todos is None:
             self.todos = []
+        if self.processed_page_numbers is None:
+            self.processed_page_numbers = set()
 from ..core.database import DatabaseManager
 from ..core.events import get_event_bus, EventType
 
@@ -442,6 +445,163 @@ class NotebookTextExtractor:
         
         return False
     
+    def _is_handwritten_notebook(self, notebook_uuid: str, notebook_name: str) -> bool:
+        """
+        Check if a notebook is handwritten (not PDF/EPUB) and should have OCR applied.
+        
+        Args:
+            notebook_uuid: The UUID of the notebook
+            notebook_name: The visible name of the notebook
+            
+        Returns:
+            True if it's a handwritten notebook that should have OCR applied, False otherwise
+        """
+        if self.db_manager:
+            try:
+                with self.db_manager.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT document_type FROM notebook_metadata WHERE notebook_uuid = ?",
+                        (notebook_uuid,)
+                    )
+                    result = cursor.fetchone()
+                    if result:
+                        doc_type = result[0]
+                        if doc_type in ['pdf', 'epub']:
+                            logger.info(f"⏭️ Skipping OCR for {doc_type.upper()} document: {notebook_name}")
+                            return False
+                        else:
+                            # Document types: 'notebook', 'unknown', etc. - these are handwritten
+                            return True
+                    else:
+                        # If no metadata found, assume it's handwritten
+                        logger.debug(f"No metadata found for {notebook_name}, assuming handwritten")
+                        return True
+            except Exception as e:
+                logger.warning(f"Could not check document type for {notebook_name}: {e}")
+                # If we can't check, assume it's handwritten to be safe
+                return True
+        else:
+            # If no database manager, assume it's handwritten
+            return True
+    
+    def _calculate_rm_file_hash(self, rm_file_path: str) -> str:
+        """Calculate hash of .rm file content for change detection."""
+        import hashlib
+        try:
+            with open(rm_file_path, 'rb') as f:
+                content = f.read()
+            return hashlib.sha256(content).hexdigest()
+        except Exception as e:
+            logger.debug(f"Error calculating hash for {rm_file_path}: {e}")
+            return ""
+    
+    def _notebook_needs_processing(self, notebook_uuid: str, notebook_name: str, content_file: str, notebook_dir: str) -> bool:
+        """
+        Check if a notebook needs processing by checking individual page files and their content hashes.
+        
+        Args:
+            notebook_uuid: The UUID of the notebook
+            notebook_name: The visible name of the notebook
+            content_file: Path to the notebook's .content file
+            notebook_dir: Path to the notebook directory with .rm files
+            
+        Returns:
+            True if the notebook has new or changed pages, False if all pages are up to date
+        """
+        if not self.db_manager:
+            # Without database, always process
+            logger.debug(f"📝 {notebook_name}: No database - needs processing")
+            return True
+            
+        try:
+            # First, get the page list from .content file to know what pages exist
+            if not os.path.exists(content_file):
+                logger.info(f"📝 {notebook_name}: Content file not found - needs processing")
+                return True
+                
+            # Read the content file to get page UUIDs
+            import json
+            with open(content_file, 'r', encoding='utf-8') as f:
+                content = json.load(f)
+            
+            # Extract page UUIDs (handle different format versions)
+            page_uuid_list = []
+            if 'pages' in content:
+                page_uuid_list = content['pages']
+            elif 'cPages' in content and 'pages' in content['cPages']:
+                page_uuid_list = content['cPages']['pages']
+            else:
+                logger.info(f"📝 {notebook_name}: No pages found in content file")
+                return False
+            
+            if not page_uuid_list:
+                logger.info(f"📝 {notebook_name}: Empty notebook - no processing needed")
+                return False
+            
+            logger.info(f"📝 {notebook_name}: Checking {len(page_uuid_list)} pages for changes...")
+            
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                new_pages = 0
+                changed_pages = 0
+                
+                for page_num, page_uuid_item in enumerate(page_uuid_list, 1):
+                    # Handle different page UUID formats (string vs dict)
+                    if isinstance(page_uuid_item, dict):
+                        # Format with page objects
+                        page_uuid = page_uuid_item.get('id') or page_uuid_item.get('uuid', str(page_uuid_item))
+                    else:
+                        # Simple string format
+                        page_uuid = str(page_uuid_item)
+                    
+                    # Check if page exists in database
+                    cursor.execute('''
+                        SELECT page_content_hash, created_at 
+                        FROM notebook_text_extractions 
+                        WHERE notebook_uuid = ? AND page_uuid = ? 
+                        LIMIT 1
+                    ''', (notebook_uuid, page_uuid))
+                    
+                    db_result = cursor.fetchone()
+                    
+                    # Get the .rm file path and check if it exists
+                    rm_file_path = os.path.join(notebook_dir, f"{page_uuid}.rm")
+                    
+                    if not os.path.exists(rm_file_path):
+                        logger.debug(f"    📄 Page {page_num}: .rm file not found, skipping")
+                        continue
+                    
+                    if not db_result:
+                        # New page - needs processing
+                        logger.debug(f"    📄 Page {page_num}: New page detected")
+                        new_pages += 1
+                        continue
+                    
+                    # Page exists in DB - check if content changed
+                    stored_hash = db_result[0] if db_result[0] else ""
+                    current_hash = self._calculate_rm_file_hash(rm_file_path)
+                    
+                    if current_hash != stored_hash:
+                        logger.debug(f"    📄 Page {page_num}: Content changed (hash mismatch)")
+                        changed_pages += 1
+                    else:
+                        logger.debug(f"    📄 Page {page_num}: No changes")
+                
+                total_changes = new_pages + changed_pages
+                if total_changes > 0:
+                    logger.info(f"📝 {notebook_name}: Found changes - {new_pages} new pages, {changed_pages} modified pages")
+                    return True
+                else:
+                    logger.info(f"📝 {notebook_name}: No page changes detected - skipping processing")
+                    return False
+                
+        except Exception as e:
+            logger.warning(f"Error checking if notebook needs processing: {e}")
+            # If we can't determine, assume it needs processing to be safe
+            return True
+    
     def find_notebooks(self, input_path: str) -> List[Dict[str, Any]]:
         """Find all notebook documents in the given path."""
         input_path = Path(input_path)
@@ -497,6 +657,19 @@ class NotebookTextExtractor:
         
         logger.info(f"Processing notebook: {doc_name}")
         
+        # Check if this is a handwritten notebook that should have OCR applied
+        if not self._is_handwritten_notebook(uuid, doc_name):
+            logger.info(f"⏭️ Skipping non-handwritten document (no OCR needed): {doc_name}")
+            return NotebookTextResult(
+                notebook_name=doc_name,
+                notebook_uuid=uuid,
+                pages=[],
+                todos=[],
+                success=False,
+                error_message=f"Document type does not require OCR: {doc_name}",
+                processing_time_ms=0
+            )
+        
         if not self.is_available():
             return NotebookTextResult(
                 success=False,
@@ -548,12 +721,16 @@ class NotebookTextExtractor:
                 tmpdir = Path(tmpdir)
                 
                 for page_num, page_uuid in enumerate(page_uuid_list, 1):
-                    logger.debug(f"  Processing page {page_num}/{len(page_uuid_list)}")
+                    logger.info(f"  🔍 Checking page {page_num}/{len(page_uuid_list)} (UUID: {page_uuid})")
                     
                     # Check if this page was already processed (incremental processing)
-                    if self._is_page_already_processed(uuid, page_uuid, page_num):
-                        logger.debug(f"    ⏩ Page {page_num}: Already processed, skipping")
+                    notebook_dir_for_check = os.path.join(input_path, uuid)
+                    already_processed = self._is_page_already_processed(uuid, page_uuid, page_num, notebook_dir_for_check)
+                    if already_processed:
+                        logger.info(f"    ⏩ Page {page_num}: Already processed, skipping")
                         continue
+                    else:
+                        logger.info(f"    🔄 Page {page_num}: Processing (new or changed)")
                     
                     # Find the .rm file for this page
                     page_rm_file = Path(input_path) / uuid / f"{page_uuid}.rm"
@@ -583,7 +760,7 @@ class NotebookTextExtractor:
             
             # Store results in database if available
             if (self.db_connection or self.db_manager) and processed_pages:
-                self._store_notebook_results(uuid, doc_name, processed_pages)
+                self._store_notebook_results(uuid, doc_name, processed_pages, input_path)
             
             # Emit completion event
             event_bus = get_event_bus()
@@ -634,37 +811,58 @@ class NotebookTextExtractor:
                 error_message=str(e)
             )
     
-    def _is_page_already_processed(self, notebook_uuid: str, page_uuid: str, page_number: int) -> bool:
-        """Check if a page was already processed and stored in database."""
+    def _is_page_already_processed(self, notebook_uuid: str, page_uuid: str, page_number: int, notebook_dir: str) -> bool:
+        """Check if a page was already processed and .rm file content hasn't changed."""
         try:
             if not (self.db_connection or self.db_manager):
+                logger.debug(f"    🔍 Page {page_number}: No database connection - will process")
                 return False
-                
-            # Use the available connection
-            conn = self.db_connection if self.db_connection else self.db_manager.get_connection()
             
-            # Check if page exists in notebook_text_extractions table
+            # Get the .rm file path and check if it exists
+            rm_file_path = os.path.join(notebook_dir, f"{page_uuid}.rm")
+            if not os.path.exists(rm_file_path):
+                logger.debug(f"    🔍 Page {page_number}: .rm file not found - will skip")
+                return True  # If no .rm file, consider it "processed" (skip it)
+            
+            # Calculate current .rm file hash
+            current_hash = self._calculate_rm_file_hash(rm_file_path)
+            if not current_hash:
+                logger.debug(f"    🔍 Page {page_number}: Could not calculate hash - will process")
+                return False
+            
+            # Check if page exists in database with matching hash
             if self.db_connection:
-                cursor = conn.cursor()
+                # Direct connection - use it directly
+                cursor = self.db_connection.cursor()
                 cursor.execute("""
-                    SELECT COUNT(*) FROM notebook_text_extractions 
+                    SELECT page_content_hash FROM notebook_text_extractions 
                     WHERE notebook_uuid = ? AND page_uuid = ? AND page_number = ?
+                    LIMIT 1
                 """, (notebook_uuid, page_uuid, page_number))
-                count = cursor.fetchone()[0]
-                return count > 0
+                result = cursor.fetchone()
             else:
-                # Using db_manager - need to handle context properly
-                with conn:
+                # Using db_manager - use proper context manager
+                with self.db_manager.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
-                        SELECT COUNT(*) FROM notebook_text_extractions 
+                        SELECT page_content_hash FROM notebook_text_extractions 
                         WHERE notebook_uuid = ? AND page_uuid = ? AND page_number = ?
+                        LIMIT 1
                     """, (notebook_uuid, page_uuid, page_number))
-                    count = cursor.fetchone()[0]
-                    return count > 0
+                    result = cursor.fetchone()
+            
+            if not result:
+                logger.debug(f"    🔍 Page {page_number}: Not found in database - will process")
+                return False
+            
+            stored_hash = result[0] if result[0] else ""
+            is_unchanged = current_hash == stored_hash and stored_hash != ""
+            
+            logger.debug(f"    🔍 Page {page_number}: Hash comparison - {'unchanged' if is_unchanged else 'changed'}")
+            return is_unchanged
                     
         except Exception as e:
-            logger.debug(f"Error checking if page already processed: {e}")
+            logger.warning(f"    🔍 Page {page_number}: Error checking if already processed: {e}")
             return False  # If check fails, process the page
     
     def _process_single_page(
@@ -754,7 +952,8 @@ class NotebookTextExtractor:
         self, 
         notebook_uuid: str, 
         notebook_name: str, 
-        pages: List[NotebookPage]
+        pages: List[NotebookPage],
+        input_path: str = None
     ):
         """Store notebook text extraction results in database."""
         db_conn = self._get_db_connection()
@@ -781,20 +980,24 @@ class NotebookTextExtractor:
                 )
             ''')
             
-            # Clear existing results for this notebook
-            cursor.execute(
-                'DELETE FROM notebook_text_extractions WHERE notebook_uuid = ?', 
-                (notebook_uuid,)
-            )
-            
-            # Insert new results
+            # Process and store results per page for interruption safety
             for page in pages:
+                # Clear existing results for this specific page
+                cursor.execute(
+                    'DELETE FROM notebook_text_extractions WHERE notebook_uuid = ? AND page_uuid = ?', 
+                    (notebook_uuid, page.page_uuid)
+                )
+                
+                # Calculate page content hash
+                page_hash = self._calculate_page_content_hash(page, input_path, notebook_uuid)
+                
+                # Insert new results for this page
                 for result in page.ocr_results:
                     cursor.execute('''
                         INSERT INTO notebook_text_extractions 
                         (notebook_uuid, notebook_name, page_uuid, page_number, 
-                         text, confidence, bounding_box, language)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         text, confidence, bounding_box, language, page_content_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         notebook_uuid,
                         notebook_name,
@@ -803,10 +1006,13 @@ class NotebookTextExtractor:
                         result.text,
                         result.confidence,
                         json.dumps(result.bounding_box.to_dict()),
-                        result.language
+                        result.language,
+                        page_hash
                     ))
-            
-            db_conn.commit()
+                
+                # Commit after each page for interruption safety
+                db_conn.commit()
+                logger.debug(f"✅ Saved page {page.page_number} to database")
             
             total_regions = sum(len(page.ocr_results) for page in pages)
             logger.info(f"Stored {total_regions} text regions for notebook {notebook_name}")
@@ -817,20 +1023,22 @@ class NotebookTextExtractor:
             if self.db_manager:  # Close the connection if we created it
                 db_conn.close()
     
-    def _calculate_page_content_hash(self, page: NotebookPage) -> str:
-        """Calculate hash of page content for change detection."""
-        import hashlib
+    def _calculate_page_content_hash(self, page: NotebookPage, input_path: str = None, notebook_uuid: str = None) -> str:
+        """Calculate hash of page content for change detection based on source .rm file."""
+        # If we have the input path and notebook UUID, calculate hash from .rm file
+        if input_path and notebook_uuid:
+            rm_file_path = os.path.join(input_path, notebook_uuid, f"{page.page_uuid}.rm")
+            if os.path.exists(rm_file_path):
+                return self._calculate_rm_file_hash(rm_file_path)
         
-        # Include factors that affect OCR results
+        # Fallback to old method if .rm file not available
+        import hashlib
         content_parts = [
             str(page.page_number),
-            str(len(page.ocr_results)),  # Number of text regions
-            # Hash of all text content
+            str(len(page.ocr_results)),
             '|'.join(sorted(result.text for result in page.ocr_results)),
-            # Bounding boxes (for position changes)
             str(sorted(str(result.bounding_box) for result in page.ocr_results))
         ]
-        
         content_string = '|'.join(content_parts)
         return hashlib.md5(content_string.encode('utf-8')).hexdigest()
     
@@ -838,21 +1046,30 @@ class NotebookTextExtractor:
         self, 
         notebook_uuid: str, 
         notebook_name: str, 
-        pages: List[NotebookPage]
-    ):
-        """Store results with page-level incremental updates."""
+        pages: List[NotebookPage],
+        input_path: str = None
+    ) -> set:
+        """Store results with page-level incremental updates.
+        
+        Returns:
+            Set of page numbers that were actually updated
+        """
         db_conn = self._get_db_connection()
         if not db_conn:
-            return
+            logger.error(f"❌ No database connection available for storing {notebook_name}")
+            return set()
+        
+        logger.info(f"💾 Starting incremental storage for {notebook_name} ({len(pages)} pages)")
         
         try:
             cursor = db_conn.cursor()
             updated_pages = 0
             total_regions = 0
+            updated_page_numbers = set()
             
             # For each page that was processed
             for page in pages:
-                page_hash = self._calculate_page_content_hash(page)
+                page_hash = self._calculate_page_content_hash(page, input_path, notebook_uuid)
                 
                 # Check if this page needs updating
                 cursor.execute('''
@@ -868,16 +1085,19 @@ class NotebookTextExtractor:
                     continue
                 
                 # Page has changed - update it
-                logger.info(f"Updating page {page.page_number} in notebook {notebook_name}")
+                logger.info(f"💾 Updating page {page.page_number} in notebook {notebook_name}")
                 updated_pages += 1
+                updated_page_numbers.add(page.page_number)
                 
                 # Delete old entries for this specific page
                 cursor.execute('''
                     DELETE FROM notebook_text_extractions 
                     WHERE notebook_uuid = ? AND page_uuid = ?
                 ''', (notebook_uuid, page.page_uuid))
+                logger.debug(f"🗑️ Deleted old entries for page {page.page_number}")
                 
                 # Insert new entries for this page
+                regions_for_page = 0
                 for result in page.ocr_results:
                     cursor.execute('''
                         INSERT INTO notebook_text_extractions 
@@ -896,17 +1116,23 @@ class NotebookTextExtractor:
                         page_hash
                     ))
                     total_regions += 1
-            
-            db_conn.commit()
+                    regions_for_page += 1
+                
+                # Commit after each page for interruption safety
+                db_conn.commit()
+                logger.info(f"✅ Saved page {page.page_number} to database ({regions_for_page} text regions)")
             
             if updated_pages > 0:
                 logger.info(f"Updated {updated_pages} pages with {total_regions} text regions for notebook {notebook_name}")
             else:
                 logger.info(f"No changes detected in notebook {notebook_name}")
+            
+            return updated_page_numbers
                 
         except Exception as e:
             logger.error(f"Error in incremental notebook update: {e}")
             db_conn.rollback()
+            return set()
         finally:
             if self.db_manager:  # Close the connection if we created it
                 db_conn.close()
@@ -941,15 +1167,38 @@ class NotebookTextExtractor:
                 except:
                     notebook_name = "Unknown Notebook"
             
+            # Check if this notebook should be excluded (user exclusions)
+            if self._should_exclude_notebook(notebook_uuid, notebook_name):
+                logger.info(f"⏭️ Skipping excluded notebook: {notebook_name}")
+                return NotebookProcessingResult(
+                    success=False,
+                    error_message=f"Notebook excluded from processing: {notebook_name}",
+                    notebook_name=notebook_name,
+                    notebook_uuid=notebook_uuid
+                )
+            
+            # Check if this is a handwritten notebook that should have OCR applied
+            if not self._is_handwritten_notebook(notebook_uuid, notebook_name):
+                logger.info(f"⏭️ Skipping non-handwritten document (no OCR needed): {notebook_name}")
+                return NotebookProcessingResult(
+                    success=False,
+                    error_message=f"Document type does not require OCR: {notebook_name}",
+                    notebook_name=notebook_name,
+                    notebook_uuid=notebook_uuid
+                )
+            
             start_time = time.time()
             
             # Initialize rm_parser with the parent directory for v6 support
             parent_dir = os.path.dirname(notebook_dir)
+            content_file = os.path.join(parent_dir, f"{notebook_uuid}.content")
+            
+            # Note: We rely on page-level change detection in process_notebook 
+            # instead of notebook-level checks for more precise incremental processing
+            
             self.rm_parser = RemarkableParser(parent_dir, debug=False)
             
             # Process the notebook using the existing process_notebook method
-            content_file = os.path.join(parent_dir, f"{notebook_uuid}.content")
-            
             notebook_info = {
                 'uuid': notebook_uuid,
                 'name': notebook_name,
@@ -973,10 +1222,13 @@ class NotebookTextExtractor:
                 
                 if force_reprocess:
                     logger.info(f"Force reprocessing - using regular storage")
-                    self._store_notebook_results(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [])
+                    self._store_notebook_results(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [], parent_dir)
+                    # For full reprocess, mark all pages as processed
+                    notebook_result.processed_page_numbers = {page.page_number for page in result.pages} if hasattr(result, 'pages') and result.pages else set()
                 else:
                     logger.info(f"Using incremental storage")
-                    self._store_notebook_results_incremental(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [])
+                    processed_pages = self._store_notebook_results_incremental(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [], parent_dir)
+                    notebook_result.processed_page_numbers = processed_pages
                 
                 return notebook_result
             else:

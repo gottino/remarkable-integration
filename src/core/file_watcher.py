@@ -398,6 +398,7 @@ class ReMarkableWatcher:
         
         # Processing components (will be injected)
         self.text_extractor = None
+        self.notion_sync_client = None
         
         self.is_running = False
         
@@ -406,6 +407,10 @@ class ReMarkableWatcher:
     def set_text_extractor(self, text_extractor):
         """Set the text extractor for processing."""
         self.text_extractor = text_extractor
+    
+    def set_notion_sync_client(self, notion_sync_client):
+        """Set the Notion sync client for automatic updates."""
+        self.notion_sync_client = notion_sync_client
     
     async def start(self):
         """Start the complete two-tier watching system."""
@@ -470,9 +475,16 @@ class ReMarkableWatcher:
                 result = await self._process_notebook_async(notebook_uuid)
                 
                 if result.success:
-                    logger.info(f" Successfully processed notebook: {result.notebook_name}")
+                    logger.info(f"✅ Successfully processed notebook: {result.notebook_name}")
+                    
+                    # Trigger Notion sync if configured
+                    if self.notion_sync_client:
+                        changed_pages = result.processed_page_numbers if hasattr(result, 'processed_page_numbers') else None
+                        await self._sync_notebook_to_notion_async(notebook_uuid, result.notebook_name, changed_pages)
+                    else:
+                        logger.debug("Notion sync not configured, skipping")
                 else:
-                    logger.error(f"L Failed to process notebook: {result.error_message}")
+                    logger.error(f"❌ Failed to process notebook: {result.error_message}")
             
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
@@ -492,6 +504,39 @@ class ReMarkableWatcher:
         if self.text_extractor:
             return self.text_extractor.process_notebook_incremental(notebook_uuid)
         return None
+    
+    async def _sync_notebook_to_notion_async(self, notebook_uuid: str, notebook_name: str, changed_pages: set = None):
+        """Sync a single notebook to Notion after processing."""
+        try:
+            logger.info(f"📄 Syncing notebook to Notion: {notebook_name}")
+            
+            # Get database connection from config
+            from ..core.database import DatabaseManager
+            db_path = self.config.get('database.path')
+            db_manager = DatabaseManager(db_path)
+            
+            with db_manager.get_connection() as conn:
+                # Fetch the specific notebook
+                notebooks = self.notion_sync_client.fetch_notebooks_from_db(conn)
+                target_notebook = next((nb for nb in notebooks if nb.uuid == notebook_uuid), None)
+                
+                if target_notebook:
+                    # Use incremental sync if we have changed page information
+                    existing_page_id = self.notion_sync_client.find_existing_page(notebook_uuid)
+                    if existing_page_id and changed_pages is not None:
+                        logger.info(f"📝 Incremental Notion update: {notebook_name} - {len(changed_pages)} pages changed")
+                        self.notion_sync_client.update_existing_page(existing_page_id, target_notebook, changed_pages)
+                        page_id = existing_page_id
+                    else:
+                        # Full sync for new notebooks or when changed pages unknown
+                        page_id = self.notion_sync_client.sync_notebook(target_notebook, update_existing=True)
+                    logger.info(f"✅ Synced notebook to Notion: {notebook_name} (page: {page_id})")
+                else:
+                    logger.warning(f"⚠️ Notebook not found for Notion sync: {notebook_name}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to sync notebook to Notion: {notebook_name} - {e}")
+            # Don't fail the entire processing pipeline for Notion sync issues
     
     async def _sync_maintenance_task(self):
         """Background task to handle delayed syncs."""

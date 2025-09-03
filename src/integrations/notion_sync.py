@@ -368,6 +368,54 @@ class NotionNotebookSync:
         
         return blocks
     
+    def _update_changed_pages_only(self, page_id: str, notebook: Notebook, changed_pages: set) -> None:
+        """Update only the blocks for pages that have changed."""
+        # Get all current blocks
+        blocks_response = self.client.blocks.children.list(block_id=page_id)
+        current_blocks = blocks_response["results"]
+        
+        # Find page toggle blocks to update/replace
+        blocks_to_delete = []
+        page_blocks_map = {}  # page_number -> block_id
+        header_blocks = []  # Keep header, summary, divider blocks
+        
+        for block in current_blocks:
+            if block["type"] == "toggle":
+                # Extract page number from toggle title
+                rich_text = block.get("toggle", {}).get("rich_text", [])
+                if rich_text:
+                    title = rich_text[0].get("text", {}).get("content", "")
+                    # Parse "📄 Page X" format
+                    if "📄 Page " in title:
+                        try:
+                            page_num = int(title.split("📄 Page ")[1].split(" ")[0].split("(")[0])
+                            page_blocks_map[page_num] = block["id"]
+                        except (ValueError, IndexError):
+                            # If we can't parse page number, mark for deletion
+                            blocks_to_delete.append(block["id"])
+            else:
+                # Keep header, summary, divider blocks
+                header_blocks.append(block)
+        
+        # Delete blocks for changed pages
+        for page_num in changed_pages:
+            if page_num in page_blocks_map:
+                self.client.blocks.delete(block_id=page_blocks_map[page_num])
+                logger.debug(f"🗑️ Deleted old content for page {page_num}")
+        
+        # Create new blocks for changed pages
+        new_blocks = []
+        for page in notebook.pages:
+            if page.page_number in changed_pages:
+                page_toggle = self._create_page_toggle_block(page)
+                new_blocks.append(page_toggle)
+                logger.debug(f"📝 Created new content for page {page.page_number}")
+        
+        # Append new blocks
+        if new_blocks:
+            self.client.blocks.children.append(block_id=page_id, children=new_blocks)
+            logger.info(f"✅ Updated {len(new_blocks)} changed pages in Notion")
+    
     def _create_page_toggle_block(self, page: NotebookPage) -> Dict:
         """Create a toggle block for a single notebook page with markdown formatting."""
         # Create confidence indicator
@@ -397,8 +445,8 @@ class NotionNotebookSync:
             }
         }
     
-    def update_existing_page(self, page_id: str, notebook: Notebook) -> None:
-        """Update an existing Notion page with fresh content."""
+    def update_existing_page(self, page_id: str, notebook: Notebook, changed_pages: set = None) -> None:
+        """Update an existing Notion page with incremental content changes."""
         try:
             # Update page properties
             properties = {
@@ -453,17 +501,23 @@ class NotionNotebookSync:
             # Update properties
             self.client.pages.update(page_id=page_id, properties=properties)
             
-            # Replace page content
-            # First, get current blocks
-            blocks_response = self.client.blocks.children.list(block_id=page_id)
-            
-            # Delete existing blocks
-            for block in blocks_response["results"]:
-                self.client.blocks.delete(block_id=block["id"])
-            
-            # Add new content
-            children = self._create_page_content_blocks(notebook)
-            self.client.blocks.children.append(block_id=page_id, children=children)
+            # Handle content updates incrementally
+            if changed_pages is None:
+                # Full refresh - delete all and recreate (fallback behavior)
+                logger.info(f"🔄 Full content refresh for {notebook.name}")
+                blocks_response = self.client.blocks.children.list(block_id=page_id)
+                
+                # Delete existing blocks
+                for block in blocks_response["results"]:
+                    self.client.blocks.delete(block_id=block["id"])
+                
+                # Add new content
+                children = self._create_page_content_blocks(notebook)
+                self.client.blocks.children.append(block_id=page_id, children=children)
+            else:
+                # Incremental update - only update changed pages
+                logger.info(f"📝 Incremental update for {notebook.name} - {len(changed_pages)} pages changed")
+                self._update_changed_pages_only(page_id, notebook, changed_pages)
             
             logger.info(f"✅ Updated Notion page for notebook: {notebook.name}")
             
@@ -474,19 +528,32 @@ class NotionNotebookSync:
     def find_existing_page(self, notebook_uuid: str) -> Optional[str]:
         """Find existing Notion page for a notebook by UUID."""
         try:
-            # Search for pages with matching UUID
+            # Search for pages with matching UUID (excluding archived pages)
             response = self.client.databases.query(
                 database_id=self.database_id,
                 filter={
-                    "property": "Notebook UUID",
-                    "rich_text": {
-                        "equals": notebook_uuid
-                    }
+                    "and": [
+                        {
+                            "property": "Notebook UUID",
+                            "rich_text": {
+                                "equals": notebook_uuid
+                            }
+                        },
+                        {
+                            "property": "archived",
+                            "checkbox": {
+                                "equals": False
+                            }
+                        }
+                    ]
                 }
             )
             
             if response["results"]:
-                return response["results"][0]["id"]
+                # Double check that the page is not archived
+                page = response["results"][0]
+                if not page.get("archived", False):
+                    return page["id"]
             return None
             
         except APIResponseError as e:

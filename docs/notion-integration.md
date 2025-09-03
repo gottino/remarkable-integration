@@ -217,12 +217,34 @@ If you want additional properties in your Notion database:
 3. Examples: Tags, Categories, Review Status, etc.
 
 ### Automation
-You can set up automatic syncing by:
-1. Running the sync command in a cron job
-2. Integrating with the file watcher system
-3. Setting up a webhook trigger
 
-Example cron job (every hour):
+#### Real-Time Watching System (Recommended)
+Enable automatic real-time sync with the watching system:
+
 ```bash
-0 * * * * cd /path/to/remarkable-integration && poetry run python src/cli/main.py sync-notion --database-id YOUR_ID
+# 1. Set up Notion credentials
+poetry run python scripts/setup_notion_watching.py
+
+# 2. Start the complete watching pipeline
+poetry run python src/cli/main.py watch
+```
+
+The watching system provides complete automation:
+- **Real-time monitoring**: Watches your reMarkable app directory for changes
+- **Automatic sync**: Rsyncs changes to local processing directory  
+- **Smart processing**: Only processes changed notebooks with incremental OCR
+- **Auto-sync to Notion**: Immediately syncs processed notebooks with markdown formatting
+- **Intelligent updates**: Only updates Notion pages that have actually changed
+
+#### Manual/Scheduled Sync
+Alternative options for periodic syncing:
+
+1. **Cron job** (every hour):
+```bash
+0 * * * * cd /path/to/remarkable-integration && poetry run python src/cli/main.py sync-notion --database-id YOUR_ID --no-ssl-verify
+```
+
+2. **Manual sync** when needed:
+```bash
+poetry run python src/cli/main.py sync-notion --database-id YOUR_ID --no-ssl-verify
 ```

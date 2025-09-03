@@ -1602,9 +1602,11 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
     db_manager = DatabaseManager(db_path)
     
     # Initialize text extractor with database manager for thread safety
+    exclude_notebooks = config_obj.get('remarkable.exclude_notebooks', {})
     text_extractor = NotebookTextExtractor(
         data_directory=local_sync_dir,
-        db_manager=db_manager
+        db_manager=db_manager,
+        exclude_notebooks=exclude_notebooks
     )
     
     # Initialize the two-tier watcher system
@@ -1619,6 +1621,34 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
         # Create watcher
         watcher = ReMarkableWatcher(config_obj)
         watcher.set_text_extractor(text_extractor)
+        
+        # Set up Notion integration if configured
+        notion_enabled = config_obj.get('integrations.notion.enabled', False)
+        notion_token = os.getenv('NOTION_TOKEN') or config_obj.get('integrations.notion.api_token')
+        notion_database_id = os.getenv('NOTION_DATABASE_ID') or config_obj.get('integrations.notion.database_id')
+        
+        # Enhanced debug logging
+        click.echo(f"🔍 Detailed Notion config debug:")
+        click.echo(f"   config_obj type: {type(config_obj)}")
+        click.echo(f"   config_obj.config_path: {config_obj.config_path}")
+        click.echo(f"   raw get call: config_obj.get('integrations.notion.enabled', False)")
+        click.echo(f"   result: {notion_enabled} (type: {type(notion_enabled)})")
+        click.echo(f"   full integrations section: {config_obj.get_section('integrations')}")
+        
+        if notion_enabled and notion_token and notion_database_id:
+            try:
+                from src.integrations.notion_sync import NotionNotebookSync
+                notion_client = NotionNotebookSync(notion_token, notion_database_id, verify_ssl=False)
+                watcher.set_notion_sync_client(notion_client)
+                click.echo("🔗 Notion integration enabled - will auto-sync notebook changes")
+            except ImportError:
+                click.echo("⚠️  Notion integration requested but notion-client not installed", err=True)
+            except Exception as e:
+                click.echo(f"⚠️  Failed to initialize Notion integration: {e}", err=True)
+        elif notion_enabled:
+            click.echo("⚠️  Notion integration enabled but missing token or database ID", err=True)
+        else:
+            click.echo("📝 Notion integration disabled - only processing locally")
         
         # Start the system
         import asyncio
@@ -1640,6 +1670,8 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
                 click.echo("   2. Automatically rsync changes to local directory") 
                 click.echo("   3. Process changed notebooks with incremental updates")
                 click.echo("   4. Extract text using AI-powered OCR")
+                if watcher.notion_sync_client:
+                    click.echo("   5. Auto-sync processed notebooks to Notion")
                 click.echo("\nPress Ctrl+C to stop watching...")
                 
                 # Keep running until interrupted
