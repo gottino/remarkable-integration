@@ -453,41 +453,81 @@ class ReMarkableWatcher:
     
     async def on_sync_completed(self, event):
         """Called when source directory sync is completed."""
-        logger.debug("Sync completed, local processing will be triggered automatically")
+        logger.info("📁 Sync completed, checking for changed notebooks...")
+        
+        # Use metadata-driven processing to identify and process only changed notebooks
+        await self._process_changed_notebooks_only()
+    
+    async def _process_changed_notebooks_only(self):
+        """Process only notebooks that have changed according to metadata."""
+        try:
+            from ..core.notebook_paths import detect_metadata_changes, update_changed_metadata_only
+            from ..core.database import DatabaseManager
+            
+            db_path = self.config.get('database.path')
+            db_manager = DatabaseManager(db_path)
+            
+            with db_manager.get_connection() as conn:
+                # Detect which notebooks have changed metadata
+                source_dir = self.config.get('remarkable.source_directory')
+                changed_uuids = detect_metadata_changes(source_dir, conn, "./data")
+                
+                if not changed_uuids:
+                    logger.info("📊 No notebook changes detected - skipping processing")
+                    return
+                
+                logger.info(f"📝 Processing {len(changed_uuids)} changed notebooks...")
+                
+                # Update changed metadata in database
+                update_changed_metadata_only(source_dir, conn, changed_uuids, "./data")
+                
+                # Update Notion metadata for changed notebooks
+                if self.notion_sync_client:
+                    self.notion_sync_client.refresh_notion_metadata_for_specific_notebooks(conn, changed_uuids)
+                
+                # Process only the changed notebooks
+                processed_count = 0
+                for notebook_uuid in changed_uuids:
+                    try:
+                        # Get notebook name for exclusion check
+                        notebook_name = None
+                        if self.text_extractor and hasattr(self.text_extractor, '_should_exclude_notebook'):
+                            cursor = conn.execute('SELECT visible_name FROM notebook_metadata WHERE notebook_uuid = ?', (notebook_uuid,))
+                            name_result = cursor.fetchone()
+                            notebook_name = name_result[0] if name_result else "Unknown"
+                            
+                            # Check if this notebook should be excluded
+                            if self.text_extractor._should_exclude_notebook(notebook_uuid, notebook_name):
+                                logger.info(f"⏭️ Skipping excluded notebook: {notebook_name}")
+                                continue
+                        
+                        # Process this specific notebook
+                        result = await self._process_notebook_async(notebook_uuid)
+                        
+                        if result.success:
+                            logger.info(f"✅ Successfully processed: {result.notebook_name}")
+                            processed_count += 1
+                            
+                            # Trigger Notion sync if configured
+                            if self.notion_sync_client:
+                                changed_pages = result.processed_page_numbers if hasattr(result, 'processed_page_numbers') else None
+                                await self._sync_notebook_to_notion_async(notebook_uuid, result.notebook_name, changed_pages)
+                        else:
+                            logger.warning(f"⚠️ Failed to process {notebook_uuid}: {result.error_message}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing notebook {notebook_uuid}: {e}")
+                
+                logger.info(f"🎉 Completed processing {processed_count} changed notebooks")
+                        
+        except Exception as e:
+            logger.error(f"Error in metadata-driven processing: {e}")
     
     async def on_file_ready_for_processing(self, event: FileSystemEvent):
         """Called when a file in local sync directory is ready for processing."""
-        if not self.text_extractor:
-            logger.warning("No text extractor configured, skipping processing")
-            return
-        
-        file_path = event.src_path
-        
-        try:
-            # Check if this is a notebook content file
-            if file_path.endswith('.content'):
-                logger.info(f"Processing notebook: {Path(file_path).name}")
-                
-                # Extract notebook UUID from filename
-                notebook_uuid = Path(file_path).stem
-                
-                # Process with incremental updates
-                result = await self._process_notebook_async(notebook_uuid)
-                
-                if result.success:
-                    logger.info(f"✅ Successfully processed notebook: {result.notebook_name}")
-                    
-                    # Trigger Notion sync if configured
-                    if self.notion_sync_client:
-                        changed_pages = result.processed_page_numbers if hasattr(result, 'processed_page_numbers') else None
-                        await self._sync_notebook_to_notion_async(notebook_uuid, result.notebook_name, changed_pages)
-                    else:
-                        logger.debug("Notion sync not configured, skipping")
-                else:
-                    logger.error(f"❌ Failed to process notebook: {result.error_message}")
-            
-        except Exception as e:
-            logger.error(f"Error processing file {file_path}: {e}")
+        # Skip individual file processing - we now use metadata-driven batch processing
+        # after sync completion for better efficiency and accuracy
+        logger.debug(f"File ready: {event.src_path} (will be processed in metadata-driven batch)")
     
     async def _process_notebook_async(self, notebook_uuid: str):
         """Process notebook asynchronously (wrapper for sync text extractor)."""
@@ -512,24 +552,71 @@ class ReMarkableWatcher:
             
             # Get database connection from config
             from ..core.database import DatabaseManager
+            from ..integrations.notion_incremental import NotionSyncTracker
             db_path = self.config.get('database.path')
             db_manager = DatabaseManager(db_path)
             
             with db_manager.get_connection() as conn:
-                # Fetch the specific notebook
-                notebooks = self.notion_sync_client.fetch_notebooks_from_db(conn)
+                # Use incremental change detection to determine what actually needs syncing
+                sync_tracker = NotionSyncTracker(db_manager)
+                changes = sync_tracker.get_notebook_changes(notebook_uuid)
+                
+                # Fetch the specific notebook (skip metadata refresh since we did it at startup)
+                notebooks = self.notion_sync_client.fetch_notebooks_from_db(conn, refresh_changed_metadata=False)
                 target_notebook = next((nb for nb in notebooks if nb.uuid == notebook_uuid), None)
                 
                 if target_notebook:
-                    # Use incremental sync if we have changed page information
                     existing_page_id = self.notion_sync_client.find_existing_page(notebook_uuid)
-                    if existing_page_id and changed_pages is not None:
-                        logger.info(f"📝 Incremental Notion update: {notebook_name} - {len(changed_pages)} pages changed")
-                        self.notion_sync_client.update_existing_page(existing_page_id, target_notebook, changed_pages)
+                    
+                    if existing_page_id:
+                        # Check for content changes with better filtering
+                        if changes['new_pages'] or changes['changed_pages']:
+                            # Log what we're syncing
+                            total_to_sync = len(changes['new_pages']) + len(changes['changed_pages'])
+                            logger.info(f"📝 Syncing {total_to_sync} pages to Notion: {notebook_name} ({len(changes['new_pages'])} new, {len(changes['changed_pages'])} changed)")
+                            
+                            # Sync both new and changed pages incrementally  
+                            all_changed_pages = set(changes['new_pages'] + changes['changed_pages'])
+                            self.notion_sync_client.update_existing_page(existing_page_id, target_notebook, all_changed_pages)
+                            
+                            # Mark individual pages as synced
+                            for page_num in all_changed_pages:
+                                page = next((p for p in target_notebook.pages if p.page_number == page_num), None)
+                                if page:
+                                    page_content_hash = sync_tracker._calculate_page_content_hash((None, None, None, page.confidence, page.page_number, page.text))
+                                    sync_tracker.mark_page_synced(notebook_uuid, page_num, page.page_uuid, page_content_hash)
+                        elif changes['metadata_changed']:
+                            # Only metadata changed - update metadata
+                            logger.info(f"📄 Updating metadata only for: {notebook_name}")
+                            properties = {
+                                "Total Pages": {"number": target_notebook.total_pages},
+                                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                            }
+                            self.notion_sync_client.client.pages.update(page_id=existing_page_id, properties=properties)
+                        else:
+                            logger.info(f"⏭️ No changes detected for: {notebook_name}")
+                            return
+                            
+                        # Mark as synced after successful content or metadata sync
+                        sync_tracker.mark_notebook_synced(
+                            notebook_uuid, existing_page_id,
+                            changes['current_content_hash'],
+                            changes['current_metadata_hash'], 
+                            changes['current_total_pages']
+                        )
                         page_id = existing_page_id
                     else:
-                        # Full sync for new notebooks or when changed pages unknown
-                        page_id = self.notion_sync_client.sync_notebook(target_notebook, update_existing=True)
+                        # New notebook - create page
+                        logger.info(f"📖 Creating new Notion page for: {notebook_name}")
+                        page_id = self.notion_sync_client.create_notebook_page(target_notebook)
+                        
+                        # Mark as synced for new notebooks
+                        sync_tracker.mark_notebook_synced(
+                            notebook_uuid, page_id,
+                            changes['current_content_hash'],
+                            changes['current_metadata_hash'], 
+                            changes['current_total_pages']
+                        )
                     logger.info(f"✅ Synced notebook to Notion: {notebook_name} (page: {page_id})")
                 else:
                     logger.warning(f"⚠️ Notebook not found for Notion sync: {notebook_name}")

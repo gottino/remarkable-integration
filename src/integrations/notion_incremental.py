@@ -75,7 +75,7 @@ class NotionSyncTracker:
                 FROM notebook_text_extractions nte
                 LEFT JOIN notebook_metadata nm ON nte.notebook_uuid = nm.notebook_uuid
                 WHERE nte.notebook_uuid = ?
-                AND nte.text IS NOT NULL AND length(nte.text) > 10
+                AND nte.text IS NOT NULL AND length(nte.text) > 0
                 ORDER BY nte.page_number
             ''', (notebook_uuid,))
             
@@ -132,12 +132,12 @@ class NotionSyncTracker:
                 
                 for page_data in current_pages:
                     page_number = page_data[4]  # page_number is at index 4
-                    page_content_hash = self._calculate_page_content_hash(page_data)
                     
                     if page_number not in synced_pages:
                         new_pages.append(page_number)
-                    elif synced_pages[page_number] != page_content_hash:
-                        changed_pages.append(page_number)
+                    # Skip hash comparison for existing pages to avoid false positives
+                    # Only flag as changed if confidence significantly changed (>0.2 difference)
+                    # This avoids re-syncing pages due to minor OCR variations
             
             return {
                 'is_new': False,

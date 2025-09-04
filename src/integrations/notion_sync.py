@@ -14,6 +14,7 @@ from datetime import datetime
 
 from .notion_markdown import MarkdownToNotionConverter
 from .notion_incremental import NotionSyncTracker, should_sync_notebook, log_sync_decision
+from ..core.notebook_paths import update_notebook_metadata
 
 try:
     from notion_client import Client
@@ -110,9 +111,74 @@ class NotionNotebookSync:
         self.database_id = database_id
         self.markdown_converter = MarkdownToNotionConverter()
         self.sync_tracker = None  # Will be set when db_manager is available
+    
+    def refresh_notion_metadata_for_specific_notebooks(self, db_connection, notebook_uuids: set) -> int:
+        """Refresh Notion metadata properties only for specific notebooks."""
+        if not notebook_uuids:
+            logger.debug("No notebooks specified for Notion metadata refresh")
+            return 0
+            
+        refreshed_count = 0
+        logger.info(f"🔄 Refreshing Notion metadata for {len(notebook_uuids)} changed notebooks...")
         
-    def fetch_notebooks_from_db(self, db_connection) -> List[Notebook]:
+        # Fetch notebooks that have changed metadata
+        notebooks = self.fetch_notebooks_from_db(db_connection, refresh_changed_metadata=False)
+        changed_notebooks = [nb for nb in notebooks if nb.uuid in notebook_uuids]
+        
+        for notebook in changed_notebooks:
+            try:
+                existing_page_id = self.find_existing_page(notebook.uuid)
+                
+                if existing_page_id:
+                    logger.debug(f"📝 Updating Notion metadata for: {notebook.name}")
+                    
+                    # Build metadata properties
+                    properties = {
+                        "Total Pages": {"number": notebook.total_pages},
+                        "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                    }
+                    
+                    if notebook.metadata:
+                        # Add path tags
+                        if notebook.metadata.path_tags:
+                            properties["Tags"] = {
+                                "multi_select": [
+                                    {"name": tag} for tag in notebook.metadata.path_tags
+                                ]
+                            }
+                        
+                        # Add last modified date
+                        if notebook.metadata.last_modified:
+                            properties["Last Modified"] = {
+                                "date": {
+                                    "start": notebook.metadata.last_modified.isoformat()
+                                }
+                            }
+                        
+                        # Add last viewed date
+                        if notebook.metadata.last_opened:
+                            properties["Last Viewed"] = {
+                                "date": {
+                                    "start": notebook.metadata.last_opened.isoformat()
+                                }
+                            }
+                    
+                    # Update only properties, not content
+                    self.client.pages.update(page_id=existing_page_id, properties=properties)
+                    refreshed_count += 1
+                    
+                else:
+                    logger.debug(f"⚠️ No existing Notion page found for: {notebook.name}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to update Notion metadata for {notebook.name}: {e}")
+        
+        logger.info(f"✅ Refreshed Notion metadata for {refreshed_count} notebooks")
+        return refreshed_count
+        
+    def fetch_notebooks_from_db(self, db_connection, refresh_changed_metadata: bool = False) -> List[Notebook]:
         """Fetch all notebooks with extracted text from database."""
+        
         cursor = db_connection.cursor()
         
         # Get all notebooks with text and their metadata
@@ -129,7 +195,7 @@ class NotionNotebookSync:
                 nm.last_opened
             FROM notebook_text_extractions nte
             LEFT JOIN notebook_metadata nm ON nte.notebook_uuid = nm.notebook_uuid
-            WHERE nte.text IS NOT NULL AND length(nte.text) > 10
+            WHERE nte.text IS NOT NULL AND length(nte.text) > 0
             ORDER BY nte.notebook_name, nte.page_number
         ''')
         
@@ -361,7 +427,7 @@ class NotionNotebookSync:
         })
         
         # Add pages (limited to max_pages, latest first)
-        pages_to_show = notebook.pages[:max_pages]
+        pages_to_show = sorted(notebook.pages, key=lambda p: p.page_number, reverse=True)[:max_pages]
         for page in pages_to_show:
             page_toggle = self._create_page_toggle_block(page)
             blocks.append(page_toggle)
@@ -403,18 +469,26 @@ class NotionNotebookSync:
                 self.client.blocks.delete(block_id=page_blocks_map[page_num])
                 logger.debug(f"🗑️ Deleted old content for page {page_num}")
         
-        # Create new blocks for changed pages
-        new_blocks = []
-        for page in notebook.pages:
-            if page.page_number in changed_pages:
-                page_toggle = self._create_page_toggle_block(page)
-                new_blocks.append(page_toggle)
-                logger.debug(f"📝 Created new content for page {page.page_number}")
+        # Create new blocks for changed pages in reverse order (newest first)
+        changed_pages_list = [page for page in notebook.pages if page.page_number in changed_pages]
+        changed_pages_sorted = sorted(changed_pages_list, key=lambda p: p.page_number, reverse=True)
         
-        # Append new blocks
-        if new_blocks:
-            self.client.blocks.children.append(block_id=page_id, children=new_blocks)
-            logger.info(f"✅ Updated {len(new_blocks)} changed pages in Notion")
+        # Find insertion point (after header blocks, before existing page blocks)
+        insertion_point = len(header_blocks)  # Insert after header/summary/divider
+        
+        # Insert new pages one by one in reverse order (highest page number first)
+        for page in changed_pages_sorted:
+            page_toggle = self._create_page_toggle_block(page)
+            # Insert at the same position so newest pages appear first
+            self.client.blocks.children.append(
+                block_id=page_id, 
+                children=[page_toggle],
+                after=header_blocks[-1]["id"] if header_blocks else None
+            )
+            logger.debug(f"📝 Inserted page {page.page_number} at top of page list")
+        
+        if changed_pages_sorted:
+            logger.info(f"✅ Updated {len(changed_pages_sorted)} changed pages in Notion (newest first)")
     
     def _create_page_toggle_block(self, page: NotebookPage) -> Dict:
         """Create a toggle block for a single notebook page with markdown formatting."""
@@ -528,32 +602,20 @@ class NotionNotebookSync:
     def find_existing_page(self, notebook_uuid: str) -> Optional[str]:
         """Find existing Notion page for a notebook by UUID."""
         try:
-            # Search for pages with matching UUID (excluding archived pages)
+            # Search for pages with matching UUID
             response = self.client.databases.query(
                 database_id=self.database_id,
                 filter={
-                    "and": [
-                        {
-                            "property": "Notebook UUID",
-                            "rich_text": {
-                                "equals": notebook_uuid
-                            }
-                        },
-                        {
-                            "property": "archived",
-                            "checkbox": {
-                                "equals": False
-                            }
-                        }
-                    ]
+                    "property": "Notebook UUID",
+                    "rich_text": {
+                        "equals": notebook_uuid
+                    }
                 }
             )
             
             if response["results"]:
-                # Double check that the page is not archived
                 page = response["results"][0]
-                if not page.get("archived", False):
-                    return page["id"]
+                return page["id"]
             return None
             
         except APIResponseError as e:

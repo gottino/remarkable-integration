@@ -535,6 +535,64 @@ class NotebookPathManager:
         
         return documents
 
+def detect_metadata_changes(remarkable_dir: str, db_connection, data_dir: str = None) -> set:
+    """Detect notebooks with changed metadata and return their UUIDs."""
+    logger.info("🔄 Checking for metadata changes...")
+    
+    # Get current metadata from reMarkable source
+    manager = NotebookPathManager(remarkable_dir, db_connection, data_dir)
+    manager.scan_metadata_files()
+    manager.build_all_paths()
+    current_items = list(manager.items.values())
+    
+    # Get existing metadata from database
+    cursor = db_connection.cursor()
+    cursor.execute("""
+        SELECT notebook_uuid, full_path, last_modified, last_opened 
+        FROM notebook_metadata 
+        WHERE item_type = 'DocumentType'
+    """)
+    existing_metadata = {row[0]: (row[1], row[2], row[3]) for row in cursor.fetchall()}
+    
+    changed_uuids = set()
+    
+    # Check each item for changes
+    for item in current_items:
+        if item.uuid in existing_metadata:
+            existing_path, existing_modified, existing_opened = existing_metadata[item.uuid]
+            
+            # Compare metadata fields that matter
+            # Get the full path from the manager
+            current_path = manager.get_notebook_path(item.uuid) or ""
+            current_modified = item.last_modified or ""
+            current_opened = item.last_opened or ""
+            
+            if (existing_path != current_path or 
+                existing_modified != current_modified or 
+                existing_opened != current_opened):
+                
+                logger.debug(f"📝 Metadata changed for {item.visible_name}: "
+                           f"path={existing_path!=current_path}, "
+                           f"modified={existing_modified!=current_modified}, "
+                           f"opened={existing_opened!=current_opened}")
+                changed_uuids.add(item.uuid)
+        else:
+            # New item
+            changed_uuids.add(item.uuid)
+    
+    logger.info(f"📊 Found {len(changed_uuids)} notebooks with metadata changes")
+    return changed_uuids
+
+def update_changed_metadata_only(remarkable_dir: str, db_connection, changed_uuids: set, data_dir: str = None) -> int:
+    """Update only the metadata records for changed notebooks."""
+    if not changed_uuids:
+        logger.debug("No metadata changes to update")
+        return 0
+        
+    logger.info(f"🔄 Updating {len(changed_uuids)} changed metadata records in database...")
+    manager = NotebookPathManager(remarkable_dir, db_connection, data_dir)
+    return manager.update_database_metadata()
+
 def update_notebook_metadata(remarkable_dir: str, db_connection, data_dir: str = None) -> int:
     """Convenience function to update notebook metadata in database."""
     manager = NotebookPathManager(remarkable_dir, db_connection, data_dir)

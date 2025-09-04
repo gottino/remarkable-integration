@@ -59,23 +59,9 @@ def main():
         logger.info(f"📁 Database: {db_path}")
         logger.info(f"📄 Notion database: {database_id}")
         
-        # Perform full sync - create all pages fresh  
+        # Perform full sync - use proper sync logic to handle existing pages
         with db_manager.get_connection() as conn:
-            # Fetch all notebooks from database
-            notebooks = notion_sync.fetch_notebooks_from_db(conn)
-            result = {}
-            
-            logger.info(f"📚 Found {len(notebooks)} notebooks to sync")
-            
-            for i, notebook in enumerate(notebooks, 1):
-                try:
-                    logger.info(f"📖 Creating {i}/{len(notebooks)}: {notebook.name} ({notebook.total_pages} pages)")
-                    page_id = notion_sync.create_notebook_page(notebook)
-                    result[notebook.uuid] = page_id
-                    logger.info(f"✅ Created: {notebook.name}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to create {notebook.name}: {e}")
-                    continue
+            result = notion_sync.sync_all_notebooks(conn, update_existing=True)
             
             logger.info(f"✅ Full sync completed!")
             logger.info(f"📊 Synced {len(result)} notebooks to Notion:")

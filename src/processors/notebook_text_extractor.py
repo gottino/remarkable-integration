@@ -52,6 +52,7 @@ class NotebookProcessingResult:
             self.processed_page_numbers = set()
 from ..core.database import DatabaseManager
 from ..core.events import get_event_bus, EventType
+from ..core.notebook_paths import update_notebook_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +446,23 @@ class NotebookTextExtractor:
         
         return False
     
+    def _refresh_metadata(self, input_path: str) -> None:
+        """Refresh notebook metadata from source files to ensure latest timestamps."""
+        if not self.db_manager:
+            logger.debug("No database manager available for metadata refresh")
+            return
+            
+        try:
+            logger.info("🔄 Refreshing notebook metadata from source files...")
+            with self.db_manager.get_connection() as conn:
+                # Get data directory from wherever we're processing
+                data_dir = os.path.dirname(os.path.dirname(input_path)) if input_path else "./data"
+                updated_count = update_notebook_metadata(input_path, conn, data_dir)
+                logger.info(f"✅ Refreshed metadata for {updated_count} notebooks")
+        except Exception as e:
+            logger.warning(f"Failed to refresh metadata: {e}")
+            # Don't fail processing if metadata refresh fails
+    
     def _is_handwritten_notebook(self, notebook_uuid: str, notebook_name: str) -> bool:
         """
         Check if a notebook is handwritten (not PDF/EPUB) and should have OCR applied.
@@ -656,6 +674,8 @@ class NotebookTextExtractor:
         content_file = notebook_info['content_file']
         
         logger.info(f"Processing notebook: {doc_name}")
+        
+        # Metadata is refreshed globally at startup, no need to refresh per-notebook
         
         # Check if this is a handwritten notebook that should have OCR applied
         if not self._is_handwritten_notebook(uuid, doc_name):
@@ -1141,6 +1161,8 @@ class NotebookTextExtractor:
         """Process notebook with incremental updates."""
         notebook_name = "Unknown Notebook"  # Initialize default value
         try:
+            # Metadata is refreshed globally at startup, no need to refresh per-notebook
+            
             # Find the notebook directory
             notebook_dir = None
             for root, dirs, files in os.walk(self.data_directory):

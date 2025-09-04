@@ -1638,7 +1638,23 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
         if notion_enabled and notion_token and notion_database_id:
             try:
                 from src.integrations.notion_sync import NotionNotebookSync
+                from src.core.notebook_paths import detect_metadata_changes, update_changed_metadata_only
+                
                 notion_client = NotionNotebookSync(notion_token, notion_database_id, verify_ssl=False)
+                
+                # Do initial metadata change detection and update once at startup
+                with db_manager.get_connection() as conn:
+                    changed_uuids = detect_metadata_changes(source_dir, conn, "./data")
+                    
+                    if changed_uuids:
+                        # Update changed metadata in database
+                        update_changed_metadata_only(source_dir, conn, changed_uuids, "./data")
+                        
+                        # Update corresponding Notion pages
+                        notion_client.refresh_notion_metadata_for_specific_notebooks(conn, changed_uuids)
+                    else:
+                        click.echo("📊 No metadata changes detected - all up to date")
+                
                 watcher.set_notion_sync_client(notion_client)
                 click.echo("🔗 Notion integration enabled - will auto-sync notebook changes")
             except ImportError:
