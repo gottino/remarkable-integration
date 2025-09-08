@@ -489,7 +489,7 @@ class NotionNotebookSync:
             # Capture the block ID for linking
             if result.get("results") and len(result["results"]) > 0:
                 block_id = result["results"][0]["id"]
-                self._store_page_block_mapping(notebook.uuid, page.page_number, page_id, block_id)
+                self._store_page_block_mapping(notebook.uuid, page.page_number, page_id, block_id, page.text)
                 logger.debug(f"📝 Inserted page {page.page_number} with block ID {block_id}")
             else:
                 logger.debug(f"📝 Inserted page {page.page_number} at top of page list")
@@ -497,8 +497,8 @@ class NotionNotebookSync:
         if changed_pages_sorted:
             logger.info(f"✅ Updated {len(changed_pages_sorted)} changed pages in Notion (newest first)")
     
-    def _store_page_block_mapping(self, notebook_uuid: str, page_number: int, notion_page_id: str, notion_block_id: str):
-        """Store the mapping between notebook page and Notion block ID."""
+    def _store_page_block_mapping(self, notebook_uuid: str, page_number: int, notion_page_id: str, notion_block_id: str, page_content: str = None):
+        """Store the mapping between notebook page and Notion block ID, and track synced content."""
         try:
             # We need database access - this should be passed in or made available
             from ..core.database import DatabaseManager
@@ -507,12 +507,19 @@ class NotionNotebookSync:
             with db.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Use INSERT OR REPLACE to handle updates
+                # Store in notion_page_blocks table
                 cursor.execute('''
                     INSERT OR REPLACE INTO notion_page_blocks 
                     (notebook_uuid, page_number, notion_page_id, notion_block_id, updated_at)
                     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ''', (notebook_uuid, page_number, notion_page_id, notion_block_id))
+                
+                # Also update notion_page_sync table with the block ID, sync timestamp, and synced content
+                cursor.execute('''
+                    UPDATE notion_page_sync 
+                    SET notion_block_id = ?, last_synced = CURRENT_TIMESTAMP, last_synced_content = ?
+                    WHERE notebook_uuid = ? AND page_number = ?
+                ''', (notion_block_id, page_content, notebook_uuid, page_number))
                 
                 conn.commit()
                 logger.debug(f"📎 Stored block mapping: {notebook_uuid} page {page_number} -> {notion_block_id}")
@@ -730,7 +737,8 @@ class NotionNotebookSync:
                     notebook.uuid,
                     page.page_number,
                     page.page_uuid,
-                    page_content_hash
+                    page_content_hash,
+                    page_content=page.text
                 )
     
     def sync_all_notebooks(self, db_connection, update_existing: bool = True, 

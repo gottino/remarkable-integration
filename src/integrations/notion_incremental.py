@@ -112,32 +112,95 @@ class NotionSyncTracker:
             
             last_content_hash, last_total_pages, last_metadata_hash, notion_page_id, last_synced = last_sync
             
-            # Check what changed
-            content_changed = (current_content_hash != last_content_hash) or (current_total_pages != last_total_pages)
+            # Check what changed using LastOpened timestamp as trigger
+            from datetime import datetime, timezone
+            
+            # Parse last_opened timestamp (index 8 in current_pages[0])
+            last_opened_str = current_pages[0][8]  # last_opened timestamp
+            last_opened_timestamp = None
+            if last_opened_str:
+                try:
+                    # reMarkable timestamps are in milliseconds, UTC
+                    utc_timestamp = datetime.fromtimestamp(int(last_opened_str) / 1000, tz=timezone.utc)
+                    # Convert to local time for comparison
+                    last_opened_timestamp = utc_timestamp.replace(tzinfo=None)
+                except (ValueError, TypeError):
+                    last_opened_timestamp = None
+            
+            # Parse last_synced timestamp
+            last_synced_timestamp = None
+            if last_synced:
+                try:
+                    if isinstance(last_synced, str):
+                        last_synced_timestamp = datetime.fromisoformat(last_synced)
+                    else:
+                        last_synced_timestamp = last_synced
+                except (ValueError, TypeError):
+                    last_synced_timestamp = None
+            
+            # Determine if notebook was accessed since last sync OR has new content
+            notebook_needs_sync = False
+            
+            # Check if notebook was accessed since last sync
+            if last_opened_timestamp and last_synced_timestamp:
+                notebook_was_accessed = last_opened_timestamp > last_synced_timestamp
+            elif last_opened_timestamp and not last_synced_timestamp:
+                # Never synced before, so treat as accessed
+                notebook_was_accessed = True
+            else:
+                notebook_was_accessed = False
+            
+            # Check for pages that have different content than last sync
+            has_newer_content = False
+            cursor.execute('''
+                SELECT COUNT(*) FROM notebook_text_extractions nte
+                LEFT JOIN notion_page_sync nps ON nte.notebook_uuid = nps.notebook_uuid 
+                    AND nte.page_number = nps.page_number
+                WHERE nte.notebook_uuid = ? 
+                    AND nte.text IS NOT NULL AND length(nte.text) > 0
+                    AND (nps.last_synced_content IS NULL OR nte.text != nps.last_synced_content)
+            ''', (notebook_uuid,))
+            unsynced_pages_count = cursor.fetchone()[0]
+            
+            has_newer_content = unsynced_pages_count > 0
+            
+            # Trigger sync if notebook was accessed OR has content changes
+            notebook_needs_sync = notebook_was_accessed or has_newer_content
+            
+            # Check metadata changes independently
             metadata_changed = current_metadata_hash != last_metadata_hash
             
-            # Find new and changed pages
+            # Find new and changed pages (only if notebook needs sync)
             new_pages = []
             changed_pages = []
+            content_changed = False
             
-            if content_changed:
-                # Get page-level sync state
+            if notebook_needs_sync:
+                # Get pages that need syncing based on content comparison
                 cursor.execute('''
-                    SELECT page_number, content_hash
-                    FROM notion_page_sync
-                    WHERE notebook_uuid = ?
+                    SELECT nte.page_number, nte.text, nps.last_synced_content
+                    FROM notebook_text_extractions nte
+                    LEFT JOIN notion_page_sync nps ON nte.notebook_uuid = nps.notebook_uuid 
+                        AND nte.page_number = nps.page_number
+                    WHERE nte.notebook_uuid = ? 
+                        AND nte.text IS NOT NULL AND length(nte.text) > 0
+                    ORDER BY nte.page_number
                 ''', (notebook_uuid,))
                 
-                synced_pages = {page_num: content_hash for page_num, content_hash in cursor.fetchall()}
+                page_sync_info = cursor.fetchall()
                 
-                for page_data in current_pages:
-                    page_number = page_data[4]  # page_number is at index 4
-                    
-                    if page_number not in synced_pages:
+                # Check each page to determine if it's new or changed
+                for page_number, current_text, last_synced_content in page_sync_info:
+                    if last_synced_content is None:
+                        # Never synced - this is a new page
                         new_pages.append(page_number)
-                    # Skip hash comparison for existing pages to avoid false positives
-                    # Only flag as changed if confidence significantly changed (>0.2 difference)
-                    # This avoids re-syncing pages due to minor OCR variations
+                        content_changed = True
+                    else:
+                        # Compare current text vs last synced content
+                        if current_text != last_synced_content:
+                            # Content is different - this page changed
+                            changed_pages.append(page_number)
+                            content_changed = True
             
             return {
                 'is_new': False,
@@ -165,15 +228,15 @@ class NotionSyncTracker:
             conn.commit()
     
     def mark_page_synced(self, notebook_uuid: str, page_number: int, page_uuid: str, 
-                        content_hash: str, notion_block_id: Optional[str] = None):
+                        content_hash: str, notion_block_id: Optional[str] = None, page_content: Optional[str] = None):
         """Mark a specific page as synced."""
         with self.db_manager.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO notion_page_sync 
-                (notebook_uuid, page_number, page_uuid, content_hash, notion_block_id, last_synced)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (notebook_uuid, page_number, page_uuid, content_hash, notion_block_id, datetime.now()))
+                (notebook_uuid, page_number, page_uuid, content_hash, notion_block_id, last_synced, last_synced_content)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (notebook_uuid, page_number, page_uuid, content_hash, notion_block_id, datetime.now(), page_content))
             conn.commit()
     
     def get_synced_notebooks(self) -> Set[str]:

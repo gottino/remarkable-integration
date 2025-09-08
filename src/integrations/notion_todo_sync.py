@@ -82,11 +82,10 @@ class NotionTodoSync:
                 LEFT JOIN notion_page_blocks npb ON t.notebook_uuid = npb.notebook_uuid 
                     AND t.page_number = npb.page_number
                 LEFT JOIN notion_todo_sync nts ON t.id = nts.todo_id
-                WHERE t.actual_date >= ?
-                    AND t.actual_date IS NOT NULL
+                WHERE (t.actual_date >= ? OR t.actual_date IS NULL)
                     AND (nm.full_path NOT LIKE '%Archive%' AND nm.full_path NOT LIKE '%archive%')
                     AND nts.todo_id IS NULL  -- Only todos not yet exported
-                ORDER BY t.actual_date DESC
+                ORDER BY t.actual_date DESC NULLS LAST, t.created_at DESC
             ''', (cutoff_date,))
             
             return cursor.fetchall()
