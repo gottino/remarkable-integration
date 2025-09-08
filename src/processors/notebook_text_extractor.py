@@ -1285,10 +1285,25 @@ class NotebookTextExtractor:
             # Insert todos into the todos table
             for i, todo in enumerate(todos):
                 logger.debug(f"Storing todo {i+1}: {todo.text[:50]}...")
+                
+                # Convert date to ISO format for storage
+                actual_date_iso = None
+                if hasattr(todo, 'date_extracted') and todo.date_extracted:
+                    try:
+                        # Convert from dd-mm-yyyy to yyyy-mm-dd for ISO format
+                        from datetime import datetime
+                        date_parts = todo.date_extracted.split('-')
+                        if len(date_parts) == 3:
+                            day, month, year = date_parts
+                            actual_date_iso = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                    except (ValueError, AttributeError):
+                        logger.debug(f"Could not convert date {todo.date_extracted} to ISO format")
+                        actual_date_iso = None
+                
                 cursor.execute('''
                     INSERT INTO todos 
-                    (notebook_uuid, page_uuid, source_file, title, text, page_number, completed, confidence, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    (notebook_uuid, page_uuid, source_file, title, text, page_number, completed, confidence, created_at, actual_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 ''', (
                     todo.notebook_uuid,
                     None,  # page_uuid - could be added if needed
@@ -1297,7 +1312,8 @@ class NotebookTextExtractor:
                     todo.text,
                     str(todo.page_number),
                     todo.completed,
-                    todo.confidence
+                    todo.confidence,
+                    actual_date_iso
                 ))
             
             db_conn.commit()

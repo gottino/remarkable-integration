@@ -1657,6 +1657,34 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
                 
                 watcher.set_notion_sync_client(notion_client)
                 click.echo("🔗 Notion integration enabled - will auto-sync notebook changes")
+                
+                # Setup Todo sync if enabled
+                if config_obj.get('integrations.notion.todo_sync_enabled', False):
+                    from src.integrations.notion_todo_sync import NotionTodoSync
+                    
+                    tasks_database_id = config_obj.get('integrations.notion.tasks_database_id')
+                    
+                    if not tasks_database_id:
+                        click.echo("⚠️  Warning: Todo sync enabled but tasks_database_id not configured", err=True)
+                    else:
+                        try:
+                            # Initialize todo sync client
+                            todo_sync_client = NotionTodoSync(
+                                notion_token=notion_token,
+                                tasks_database_id=tasks_database_id,
+                                db_path=config_obj.get('database.path')
+                            )
+                            
+                            # Test connection to tasks database
+                            todo_sync_client.client.databases.retrieve(database_id=tasks_database_id)
+                            
+                            watcher.set_todo_sync_client(todo_sync_client)
+                            click.echo("📋 Todo sync enabled - will auto-export new todos to Tasks database")
+                            
+                        except Exception as e:
+                            click.echo(f"⚠️  Warning: Failed to connect to Tasks database: {e}", err=True)
+                            click.echo("   Check your tasks_database_id in config")
+                            
             except ImportError:
                 click.echo("⚠️  Notion integration requested but notion-client not installed", err=True)
             except Exception as e:
@@ -1717,6 +1745,58 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
         logger.exception("Watch command error")
         sys.exit(1)
 
+
+@cli.command('sync-todos')
+@click.option('--tasks-database-id', help='Notion Tasks database ID (overrides config)')
+@click.option('--days-back', default=30, help='How many days back to look for todos')
+@click.option('--dry-run', is_flag=True, help='Show what would be synced without making changes')
+@click.pass_context
+def sync_todos(ctx, tasks_database_id: Optional[str], days_back: int, dry_run: bool):
+    """Sync todos to Notion Tasks database."""
+    config_obj = ctx.obj['config']
+    
+    # Get configuration
+    notion_token = config_obj.get('integrations.notion.api_token')
+    if not tasks_database_id:
+        tasks_database_id = config_obj.get('integrations.notion.tasks_database_id')
+    
+    if not notion_token or not tasks_database_id:
+        click.echo("❌ Missing Notion token or tasks database ID", err=True)
+        click.echo("   Set them in config.yaml or use --tasks-database-id", err=True)
+        return
+    
+    try:
+        from src.integrations.notion_todo_sync import NotionTodoSync
+        
+        todo_sync = NotionTodoSync(
+            notion_token=notion_token,
+            tasks_database_id=tasks_database_id,
+            db_path=config_obj.get('database.path')
+        )
+        
+        click.echo(f"🚀 Starting todo sync...")
+        click.echo(f"📅 Looking back {days_back} days")
+        click.echo(f"🎯 Target database: {tasks_database_id}")
+        click.echo(f"🧪 Dry run: {'Yes' if dry_run else 'No'}")
+        
+        stats = todo_sync.sync_todos(days_back=days_back, dry_run=dry_run)
+        
+        if dry_run:
+            click.echo(f"📊 Found {stats['total']} todos that would be exported")
+        else:
+            click.echo(f"✅ Exported {stats['exported']} todos")
+            if stats['errors'] > 0:
+                click.echo(f"❌ {stats['errors']} failed to export")
+        
+        # Show export statistics
+        export_stats = todo_sync.get_export_stats()
+        click.echo(f"\n📊 Export Statistics:")
+        click.echo(f"   Total todos exported: {export_stats['total_exported']}")
+        click.echo(f"   Recent exports (7 days): {export_stats['recent_exported']}")
+        click.echo(f"   Export coverage: {export_stats['export_percentage']}% of available todos")
+        
+    except Exception as e:
+        click.echo(f"❌ Todo sync failed: {e}", err=True)
 
 @cli.command('sync-notion')
 @click.option('--token', 

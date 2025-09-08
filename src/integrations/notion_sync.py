@@ -480,15 +480,45 @@ class NotionNotebookSync:
         for page in changed_pages_sorted:
             page_toggle = self._create_page_toggle_block(page)
             # Insert at the same position so newest pages appear first
-            self.client.blocks.children.append(
+            result = self.client.blocks.children.append(
                 block_id=page_id, 
                 children=[page_toggle],
                 after=header_blocks[-1]["id"] if header_blocks else None
             )
-            logger.debug(f"📝 Inserted page {page.page_number} at top of page list")
+            
+            # Capture the block ID for linking
+            if result.get("results") and len(result["results"]) > 0:
+                block_id = result["results"][0]["id"]
+                self._store_page_block_mapping(notebook.uuid, page.page_number, page_id, block_id)
+                logger.debug(f"📝 Inserted page {page.page_number} with block ID {block_id}")
+            else:
+                logger.debug(f"📝 Inserted page {page.page_number} at top of page list")
         
         if changed_pages_sorted:
             logger.info(f"✅ Updated {len(changed_pages_sorted)} changed pages in Notion (newest first)")
+    
+    def _store_page_block_mapping(self, notebook_uuid: str, page_number: int, notion_page_id: str, notion_block_id: str):
+        """Store the mapping between notebook page and Notion block ID."""
+        try:
+            # We need database access - this should be passed in or made available
+            from ..core.database import DatabaseManager
+            db = DatabaseManager('./data/remarkable_pipeline.db')
+            
+            with db.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Use INSERT OR REPLACE to handle updates
+                cursor.execute('''
+                    INSERT OR REPLACE INTO notion_page_blocks 
+                    (notebook_uuid, page_number, notion_page_id, notion_block_id, updated_at)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (notebook_uuid, page_number, notion_page_id, notion_block_id))
+                
+                conn.commit()
+                logger.debug(f"📎 Stored block mapping: {notebook_uuid} page {page_number} -> {notion_block_id}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to store block mapping for {notebook_uuid} page {page_number}: {e}")
     
     def _create_page_toggle_block(self, page: NotebookPage) -> Dict:
         """Create a toggle block for a single notebook page with markdown formatting."""

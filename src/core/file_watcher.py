@@ -399,6 +399,7 @@ class ReMarkableWatcher:
         # Processing components (will be injected)
         self.text_extractor = None
         self.notion_sync_client = None
+        self.todo_sync_client = None
         
         self.is_running = False
         
@@ -411,6 +412,10 @@ class ReMarkableWatcher:
     def set_notion_sync_client(self, notion_sync_client):
         """Set the Notion sync client for automatic updates."""
         self.notion_sync_client = notion_sync_client
+    
+    def set_todo_sync_client(self, todo_sync_client):
+        """Set the todo sync client for automatic todo export."""
+        self.todo_sync_client = todo_sync_client
     
     async def start(self):
         """Start the complete two-tier watching system."""
@@ -618,6 +623,18 @@ class ReMarkableWatcher:
                             changes['current_total_pages']
                         )
                     logger.info(f"✅ Synced notebook to Notion: {notebook_name} (page: {page_id})")
+                    
+                    # After successful notebook sync, sync any new todos
+                    if self.todo_sync_client:
+                        try:
+                            stats = self.todo_sync_client.sync_todos(days_back=30, dry_run=False)
+                            if stats['exported'] > 0:
+                                logger.info(f"📋 Exported {stats['exported']} new todos to Tasks database")
+                            elif stats['total'] > 0:
+                                logger.debug(f"📋 {stats['total']} todos found but {stats['errors']} failed to export")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Todo sync failed: {e}")
+                    
                 else:
                     logger.warning(f"⚠️ Notebook not found for Notion sync: {notebook_name}")
                     
