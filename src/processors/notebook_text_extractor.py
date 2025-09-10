@@ -1300,10 +1300,12 @@ class NotebookTextExtractor:
                         logger.debug(f"Could not convert date {todo.date_extracted} to ISO format")
                         actual_date_iso = None
                 
+                # Use INSERT OR REPLACE to prevent duplicates when pages are reprocessed
+                # The unique constraint is on (notebook_uuid, page_number, text)
                 cursor.execute('''
-                    INSERT INTO todos 
-                    (notebook_uuid, page_uuid, source_file, title, text, page_number, completed, confidence, created_at, actual_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                    INSERT OR REPLACE INTO todos 
+                    (notebook_uuid, page_uuid, source_file, title, text, page_number, completed, confidence, created_at, actual_date, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
                 ''', (
                     todo.notebook_uuid,
                     None,  # page_uuid - could be added if needed
