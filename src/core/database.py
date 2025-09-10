@@ -371,8 +371,10 @@ class DatabaseManager:
             SQLite connection object
         """
         try:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA busy_timeout = 30000")  # 30 second timeout for locks
+            conn.execute("PRAGMA journal_mode = WAL")    # Better concurrent access
             conn.row_factory = sqlite3.Row  # Enable column access by name
             return conn
         except Exception as e:

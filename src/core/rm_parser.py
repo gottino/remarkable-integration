@@ -21,6 +21,9 @@ try:
     import rmc
     import rmscene
     VERSION_6_SUPPORT = True
+    # Apply color palette patch for missing highlighter colors
+    from .rmc_color_patch import patch_rmc_colors
+    patch_rmc_colors()
 except ImportError:
     VERSION_6_SUPPORT = False
     print("Warning: rmscene/rmc not available, v6 support disabled")
