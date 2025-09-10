@@ -210,7 +210,7 @@ class DatabaseEventHandler(EventHandler):
     def _initialize_table(self) -> None:
         """Create events table if it doesn't exist."""
         try:
-            with self.db_manager.get_connection() as conn:
+            with self.db_manager.get_connection_context() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS events (
@@ -230,7 +230,7 @@ class DatabaseEventHandler(EventHandler):
     def handle(self, event: Event) -> None:
         """Store event in database."""
         try:
-            with self.db_manager.get_connection() as conn:
+            with self.db_manager.get_connection_context() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT INTO events (event_type, data, timestamp, source, correlation_id)

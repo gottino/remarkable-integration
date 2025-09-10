@@ -472,7 +472,7 @@ class ReMarkableWatcher:
             db_path = self.config.get('database.path')
             db_manager = DatabaseManager(db_path)
             
-            with db_manager.get_connection() as conn:
+            with db_manager.get_connection_context() as conn:
                 # Detect which notebooks have changed metadata
                 source_dir = self.config.get('remarkable.source_directory')
                 changed_uuids = detect_metadata_changes(source_dir, conn, "./data")
@@ -561,7 +561,7 @@ class ReMarkableWatcher:
             db_path = self.config.get('database.path')
             db_manager = DatabaseManager(db_path)
             
-            with db_manager.get_connection() as conn:
+            with db_manager.get_connection_context() as conn:
                 # Use incremental change detection to determine what actually needs syncing
                 sync_tracker = NotionSyncTracker(db_manager)
                 changes = sync_tracker.get_notebook_changes(notebook_uuid)

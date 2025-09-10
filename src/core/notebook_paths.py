@@ -382,60 +382,62 @@ class NotebookPathManager:
             return
         
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS notebook_metadata (
-                    notebook_uuid TEXT PRIMARY KEY,
-                    visible_name TEXT NOT NULL,
-                    full_path TEXT NOT NULL,
-                    parent_uuid TEXT,
-                    item_type TEXT NOT NULL,
-                    document_type TEXT NOT NULL DEFAULT 'unknown',
-                    authors TEXT,
-                    publisher TEXT,
-                    publication_date TEXT,
-                    cover_image_path TEXT,
-                    last_modified TEXT,
-                    last_opened TEXT,
-                    last_opened_page INTEGER,
-                    deleted BOOLEAN DEFAULT FALSE,
-                    pinned BOOLEAN DEFAULT FALSE,
-                    synced BOOLEAN DEFAULT FALSE,
-                    version INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Add new columns to existing databases if they don't exist
-            new_columns = [
-                ('document_type', 'TEXT DEFAULT "unknown"'),
-                ('authors', 'TEXT'),
-                ('publisher', 'TEXT'), 
-                ('publication_date', 'TEXT'),
-                ('cover_image_path', 'TEXT')
-            ]
-            
-            for column_name, column_def in new_columns:
-                try:
-                    cursor.execute(f'ALTER TABLE notebook_metadata ADD COLUMN {column_name} {column_def}')
-                    logger.debug(f"Added {column_name} column to existing notebook_metadata table")
-                except:
-                    # Column already exists, ignore
-                    pass
-            
-            # Create indexes for faster lookups
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_notebook_metadata_path 
-                ON notebook_metadata(full_path)
-            ''')
-            
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_notebook_metadata_last_modified 
-                ON notebook_metadata(last_modified)
-            ''')
-            
-            self.db_connection.commit()
+            # Use proper transaction handling to avoid locks
+            with self.db_connection:  # This handles commit/rollback automatically
+                cursor = self.db_connection.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS notebook_metadata (
+                        notebook_uuid TEXT PRIMARY KEY,
+                        visible_name TEXT NOT NULL,
+                        full_path TEXT NOT NULL,
+                        parent_uuid TEXT,
+                        item_type TEXT NOT NULL,
+                        document_type TEXT NOT NULL DEFAULT 'unknown',
+                        authors TEXT,
+                        publisher TEXT,
+                        publication_date TEXT,
+                        cover_image_path TEXT,
+                        last_modified TEXT,
+                        last_opened TEXT,
+                        last_opened_page INTEGER,
+                        deleted BOOLEAN DEFAULT FALSE,
+                        pinned BOOLEAN DEFAULT FALSE,
+                        synced BOOLEAN DEFAULT FALSE,
+                        version INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Add new columns to existing databases if they don't exist
+                new_columns = [
+                    ('document_type', 'TEXT DEFAULT "unknown"'),
+                    ('authors', 'TEXT'),
+                    ('publisher', 'TEXT'), 
+                    ('publication_date', 'TEXT'),
+                    ('cover_image_path', 'TEXT')
+                ]
+                
+                for column_name, column_def in new_columns:
+                    try:
+                        cursor.execute(f'ALTER TABLE notebook_metadata ADD COLUMN {column_name} {column_def}')
+                        logger.debug(f"Added {column_name} column to existing notebook_metadata table")
+                    except:
+                        # Column already exists, ignore
+                        pass
+                
+                # Create indexes for faster lookups
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_notebook_metadata_path 
+                    ON notebook_metadata(full_path)
+                ''')
+                
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_notebook_metadata_last_modified 
+                    ON notebook_metadata(last_modified)
+                ''')
+                
+                # Transaction is automatically committed by the 'with' statement
             logger.info("Created notebook_metadata table")
             
         except Exception as e:
@@ -448,44 +450,52 @@ class NotebookPathManager:
             return 0
         
         try:
-            cursor = self.db_connection.cursor()
+            # Use proper transaction handling to avoid long-running locks
+            with self.db_connection:  # This handles commit/rollback automatically
+                cursor = self.db_connection.cursor()
+                
+                # Clear existing metadata
+                cursor.execute('DELETE FROM notebook_metadata')
+                
+                # Insert all metadata in batch
+                stored_count = 0
+                for uuid, item in self.items.items():
+                    path = self.build_path(uuid)
+                    
+                    cursor.execute('''
+                        INSERT INTO notebook_metadata 
+                        (notebook_uuid, visible_name, full_path, parent_uuid, item_type, document_type,
+                         authors, publisher, publication_date, cover_image_path,
+                         last_modified, last_opened, last_opened_page, deleted, pinned, synced, version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        uuid,
+                        item.visible_name,
+                        path,
+                        item.parent,
+                        item.item_type,
+                        item.document_type,
+                        item.authors,
+                        item.publisher,
+                        item.publication_date,
+                        item.cover_image_path,
+                        item.last_modified,
+                        item.last_opened,
+                        item.last_opened_page,
+                        item.deleted,
+                        item.pinned,
+                        item.synced,
+                        item.version
+                    ))
+                    stored_count += 1
+                
+                # Transaction commits here automatically
             
-            # Clear existing metadata
-            cursor.execute('DELETE FROM notebook_metadata')
-            
-            # Insert all metadata
-            stored_count = 0
+            # Track notebook changes AFTER the main transaction is complete
+            # This prevents deadlocks by avoiding nested transactions
             for uuid, item in self.items.items():
-                path = self.build_path(uuid)
-                
-                cursor.execute('''
-                    INSERT INTO notebook_metadata 
-                    (notebook_uuid, visible_name, full_path, parent_uuid, item_type, document_type,
-                     authors, publisher, publication_date, cover_image_path,
-                     last_modified, last_opened, last_opened_page, deleted, pinned, synced, version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    uuid,
-                    item.visible_name,
-                    path,
-                    item.parent,
-                    item.item_type,
-                    item.document_type,
-                    item.authors,
-                    item.publisher,
-                    item.publication_date,
-                    item.cover_image_path,
-                    item.last_modified,
-                    item.last_opened,
-                    item.last_opened_page,
-                    item.deleted,
-                    item.pinned,
-                    item.synced,
-                    item.version
-                ))
-                
-                # Track notebook metadata change for event-driven sync
                 try:
+                    path = self.build_path(uuid)
                     notebook_data = {
                         'visible_name': item.visible_name,
                         'full_path': path,
@@ -500,10 +510,7 @@ class NotebookPathManager:
                     track_notebook_operation('INSERT', uuid, data=notebook_data, trigger_source='metadata_update')
                 except Exception as e:
                     logger.warning(f"Failed to track notebook metadata change for {uuid}: {e}")
-                
-                stored_count += 1
             
-            self.db_connection.commit()
             logger.info(f"Stored {stored_count} notebook metadata records in database")
             return stored_count
             

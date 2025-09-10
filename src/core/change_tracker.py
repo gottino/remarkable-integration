@@ -44,7 +44,7 @@ class ChangeTracker:
         Returns:
             int: ID of the changelog entry created
         """
-        with self.db_manager.get_connection() as conn:
+        with self.db_manager.get_connection_context() as conn:
             cursor = conn.cursor()
             
             # Calculate content hashes if content provided
@@ -160,7 +160,7 @@ class ChangeTracker:
         Returns:
             List of change records with full context
         """
-        with self.db_manager.get_connection() as conn:
+        with self.db_manager.get_connection_context() as conn:
             cursor = conn.cursor()
             
             query = '''
@@ -229,7 +229,7 @@ class ChangeTracker:
         status = 'processed' if success else 'failed'
         placeholders = ','.join(['?'] * len(changelog_ids))
         
-        with self.db_manager.get_connection() as conn:
+        with self.db_manager.get_connection_context() as conn:
             cursor = conn.cursor()
             cursor.execute(f'''
                 UPDATE sync_changelog 
@@ -243,7 +243,7 @@ class ChangeTracker:
     
     def get_sync_health_metrics(self) -> Dict[str, Any]:
         """Get metrics about sync health and pending changes."""
-        with self.db_manager.get_connection() as conn:
+        with self.db_manager.get_connection_context() as conn:
             cursor = conn.cursor()
             
             # Pending changes by table
@@ -319,7 +319,7 @@ class ChangeTracker:
     
     def _process_batch_changes(self, changes: List[Tuple], trigger_source: str):
         """Process a batch of changes efficiently."""
-        with self.db_manager.get_connection() as conn:
+        with self.db_manager.get_connection_context() as conn:
             cursor = conn.cursor()
             
             batch_data = []
