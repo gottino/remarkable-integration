@@ -53,6 +53,8 @@ class NotebookProcessingResult:
 from ..core.database import DatabaseManager
 from ..core.events import get_event_bus, EventType
 from ..core.notebook_paths import update_notebook_metadata
+from ..core.sync_hooks import get_hook_manager, track_page_operation, track_todo_operation
+from .intelligent_todo_deduplication import IntelligentTodoDeduplicator, create_todo_candidate
 
 logger = logging.getLogger(__name__)
 
@@ -1033,6 +1035,20 @@ class NotebookTextExtractor:
                 # Commit after each page for interruption safety
                 db_conn.commit()
                 logger.debug(f"✅ Saved page {page.page_number} to database")
+                
+                # Track page change for event-driven sync
+                try:
+                    page_content = '\n'.join(result.text for result in page.ocr_results)
+                    page_data = {
+                        'text': page_content,
+                        'language': result.language if page.ocr_results else None,
+                        'content_hash': page_hash,
+                        'total_regions': len(page.ocr_results)
+                    }
+                    track_page_operation('INSERT', notebook_uuid, page.page_number, 
+                                       data=page_data, trigger_source='text_extractor')
+                except Exception as e:
+                    logger.warning(f"Failed to track page change for {notebook_uuid}|{page.page_number}: {e}")
             
             total_regions = sum(len(page.ocr_results) for page in pages)
             logger.info(f"Stored {total_regions} text regions for notebook {notebook_name}")
@@ -1272,57 +1288,161 @@ class NotebookTextExtractor:
             )
     
     def _store_todos(self, todos: List[TodoItem]):
-        """Store extracted todos in database."""
+        """Store extracted todos in database with intelligent deduplication."""
         db_conn = self._get_db_connection()
         if not db_conn:
             return
         
+        if not todos:
+            return
+        
         try:
             cursor = db_conn.cursor()
+            logger.info(f"Processing {len(todos)} todos with intelligent deduplication...")
             
-            logger.info(f"Attempting to store {len(todos)} todos in database")
+            # Group todos by page for efficient deduplication
+            todos_by_page = {}
+            for todo in todos:
+                page_key = (todo.notebook_uuid, todo.page_number)
+                if page_key not in todos_by_page:
+                    todos_by_page[page_key] = []
+                todos_by_page[page_key].append(todo)
             
-            # Insert todos into the todos table
-            for i, todo in enumerate(todos):
-                logger.debug(f"Storing todo {i+1}: {todo.text[:50]}...")
+            # Initialize deduplicator
+            deduplicator = IntelligentTodoDeduplicator(
+                similarity_threshold=0.8,
+                position_threshold=50.0,
+                confidence_improvement_threshold=0.1
+            )
+            
+            total_new = 0
+            total_updated = 0
+            total_skipped = 0
+            
+            # Process each page
+            for (notebook_uuid, page_number), page_todos in todos_by_page.items():
+                logger.debug(f"Processing {len(page_todos)} todos for page {page_number}")
                 
-                # Convert date to ISO format for storage
-                actual_date_iso = None
-                if hasattr(todo, 'date_extracted') and todo.date_extracted:
-                    try:
-                        # Convert from dd-mm-yyyy to yyyy-mm-dd for ISO format
-                        from datetime import datetime
-                        date_parts = todo.date_extracted.split('-')
-                        if len(date_parts) == 3:
-                            day, month, year = date_parts
-                            actual_date_iso = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-                    except (ValueError, AttributeError):
-                        logger.debug(f"Could not convert date {todo.date_extracted} to ISO format")
-                        actual_date_iso = None
-                
-                # Use INSERT OR REPLACE to prevent duplicates when pages are reprocessed
-                # The unique constraint is on (notebook_uuid, page_number, text)
+                # Get existing todos for this page
                 cursor.execute('''
-                    INSERT OR REPLACE INTO todos 
-                    (notebook_uuid, page_uuid, source_file, title, text, page_number, completed, confidence, created_at, actual_date, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
-                ''', (
-                    todo.notebook_uuid,
-                    None,  # page_uuid - could be added if needed
-                    todo.notebook_name,  # Clean source file name without UUID in brackets
-                    todo.text[:100],  # Use first 100 chars as title
-                    todo.text,
-                    str(todo.page_number),
-                    todo.completed,
-                    todo.confidence,
-                    actual_date_iso
-                ))
+                    SELECT id, text, confidence, created_at, actual_date, completed
+                    FROM todos 
+                    WHERE notebook_uuid = ? AND page_number = ?
+                    ORDER BY created_at DESC
+                ''', (notebook_uuid, str(page_number)))
+                
+                existing_todos = []
+                for row in cursor.fetchall():
+                    existing_todos.append({
+                        'id': row[0],
+                        'text': row[1],
+                        'confidence': row[2],
+                        'created_at': row[3],
+                        'actual_date': row[4],
+                        'completed': row[5],
+                        'page_number': page_number
+                    })
+                
+                # Convert todos to candidates
+                todo_candidates = []
+                for todo in page_todos:
+                    # Convert date to ISO format
+                    actual_date_iso = None
+                    if hasattr(todo, 'date_extracted') and todo.date_extracted:
+                        try:
+                            date_parts = todo.date_extracted.split('-')
+                            if len(date_parts) == 3:
+                                day, month, year = date_parts
+                                actual_date_iso = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                        except (ValueError, AttributeError):
+                            logger.debug(f"Could not convert date {todo.date_extracted} to ISO format")
+                    
+                    candidate = create_todo_candidate(
+                        text=todo.text,
+                        notebook_uuid=todo.notebook_uuid,
+                        page_number=todo.page_number,
+                        confidence=todo.confidence,
+                        date_extracted=actual_date_iso
+                    )
+                    todo_candidates.append(candidate)
+                
+                # Deduplicate todos for this page
+                final_todos, todos_to_delete = deduplicator.deduplicate_todos_for_page(
+                    todo_candidates, existing_todos
+                )
+                
+                # Store the final todos
+                for candidate in final_todos:
+                    if candidate.existing_id:
+                        # Update existing todo
+                        cursor.execute('''
+                            UPDATE todos 
+                            SET text = ?, confidence = ?, actual_date = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        ''', (
+                            candidate.text,
+                            candidate.confidence,
+                            candidate.date_extracted,
+                            candidate.existing_id
+                        ))
+                        total_updated += 1
+                        
+                        # Track update
+                        try:
+                            todo_data = {
+                                'text': candidate.text,
+                                'completed': False,  # Default for new extraction
+                                'confidence': candidate.confidence,
+                                'actual_date': candidate.date_extracted,
+                                'notebook_uuid': candidate.notebook_uuid,
+                                'page_number': candidate.page_number
+                            }
+                            track_todo_operation('UPDATE', candidate.existing_id, data=todo_data, trigger_source='text_extractor')
+                        except Exception as e:
+                            logger.warning(f"Failed to track todo update for {candidate.existing_id}: {e}")
+                    else:
+                        # Insert new todo
+                        cursor.execute('''
+                            INSERT INTO todos 
+                            (notebook_uuid, page_uuid, source_file, title, text, page_number, completed, confidence, created_at, actual_date, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+                        ''', (
+                            candidate.notebook_uuid,
+                            None,  # page_uuid
+                            next((t.notebook_name for t in page_todos if t.text == candidate.text), ''),  # source_file
+                            candidate.text[:100],  # title
+                            candidate.text,
+                            str(candidate.page_number),
+                            False,  # completed - default for new extraction
+                            candidate.confidence,
+                            candidate.date_extracted
+                        ))
+                        todo_id = cursor.lastrowid
+                        total_new += 1
+                        
+                        # Track insertion
+                        try:
+                            todo_data = {
+                                'text': candidate.text,
+                                'completed': False,
+                                'confidence': candidate.confidence,
+                                'actual_date': candidate.date_extracted,
+                                'notebook_uuid': candidate.notebook_uuid,
+                                'page_number': candidate.page_number
+                            }
+                            track_todo_operation('INSERT', todo_id, data=todo_data, trigger_source='text_extractor')
+                        except Exception as e:
+                            logger.warning(f"Failed to track todo insertion for {todo_id}: {e}")
+                
+                # Calculate skipped todos
+                total_skipped += len(page_todos) - len(final_todos)
             
             db_conn.commit()
-            logger.info(f"Successfully stored {len(todos)} todos in database")
+            logger.info(f"✅ Todo processing complete: {total_new} new, {total_updated} updated, {total_skipped} skipped (similar)")
             
         except Exception as e:
-            logger.error(f"Error storing todos in database: {e}")
+            logger.error(f"Error storing todos with intelligent deduplication: {e}")
+            db_conn.rollback()
         finally:
             if self.db_manager:  # Close the connection if we created it
                 db_conn.close()

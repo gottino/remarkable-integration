@@ -12,6 +12,7 @@ from typing import Dict, Optional, List
 from dataclasses import dataclass
 import sqlite3
 from xml.etree import ElementTree as ET
+from .sync_hooks import track_notebook_operation
 
 logger = logging.getLogger(__name__)
 
@@ -482,6 +483,24 @@ class NotebookPathManager:
                     item.synced,
                     item.version
                 ))
+                
+                # Track notebook metadata change for event-driven sync
+                try:
+                    notebook_data = {
+                        'visible_name': item.visible_name,
+                        'full_path': path,
+                        'document_type': item.document_type,
+                        'last_modified': item.last_modified,
+                        'last_opened': item.last_opened,
+                        'authors': item.authors,
+                        'publisher': item.publisher,
+                        'deleted': item.deleted,
+                        'pinned': item.pinned
+                    }
+                    track_notebook_operation('INSERT', uuid, data=notebook_data, trigger_source='metadata_update')
+                except Exception as e:
+                    logger.warning(f"Failed to track notebook metadata change for {uuid}: {e}")
+                
                 stored_count += 1
             
             self.db_connection.commit()
