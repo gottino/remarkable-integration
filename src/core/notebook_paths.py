@@ -606,6 +606,9 @@ def update_changed_metadata_only(remarkable_dir: str, db_connection, changed_uui
     manager.build_all_paths()
     
     updated_count = 0
+    notebooks_to_track = []  # Track notebooks that need sync tracking AFTER DB transaction
+    
+    # 🔒 PHASE 1: Update database records in a single fast transaction
     with db_connection:
         cursor = db_connection.cursor()
         
@@ -628,27 +631,35 @@ def update_changed_metadata_only(remarkable_dir: str, db_connection, changed_uui
                     item.deleted, item.pinned, item.synced, item.version
                 ))
                 
-                # 🔒 Only track changes for actual notebooks (not PDFs/EPUBs)
+                # Queue notebooks for sync tracking (only actual notebooks)
                 if item.document_type == 'notebook':
-                    try:
-                        from .sync_hooks import track_notebook_operation
-                        notebook_data = {
-                            'visible_name': item.visible_name,
-                            'full_path': path,
-                            'document_type': item.document_type,
-                            'last_modified': item.last_modified,
-                            'last_opened': item.last_opened
-                        }
-                        track_notebook_operation('UPDATE', uuid, data=notebook_data, trigger_source='selective_metadata_update')
-                        logger.debug(f"📝 Tracked selective metadata change for notebook: {item.visible_name}")
-                    except Exception as e:
-                        logger.warning(f"Failed to track selective metadata change for {uuid}: {e}")
+                    notebooks_to_track.append((uuid, item, path))
                 else:
                     logger.debug(f"🚫 Skipping sync tracking for non-notebook: {item.visible_name} (type: {item.document_type})")
                 
                 updated_count += 1
             else:
                 logger.warning(f"UUID {uuid} not found in current metadata scan")
+    
+    # 🔒 PHASE 2: Track notebook changes AFTER transaction is committed
+    # This prevents database locks from nested transactions
+    if notebooks_to_track:
+        logger.debug(f"📝 Tracking sync changes for {len(notebooks_to_track)} notebooks...")
+        from .sync_hooks import track_notebook_operation
+        
+        for uuid, item, path in notebooks_to_track:
+            try:
+                notebook_data = {
+                    'visible_name': item.visible_name,
+                    'full_path': path,
+                    'document_type': item.document_type,
+                    'last_modified': item.last_modified,
+                    'last_opened': item.last_opened
+                }
+                track_notebook_operation('UPDATE', uuid, data=notebook_data, trigger_source='selective_metadata_update')
+                logger.debug(f"📝 Tracked selective metadata change for notebook: {item.visible_name}")
+            except Exception as e:
+                logger.warning(f"Failed to track selective metadata change for {uuid}: {e}")
     
     logger.info(f"✅ Updated {updated_count} changed metadata records")
     return updated_count

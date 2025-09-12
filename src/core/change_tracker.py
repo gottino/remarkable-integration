@@ -44,54 +44,56 @@ class ChangeTracker:
         Returns:
             int: ID of the changelog entry created
         """
-        with self.db_manager.get_connection_context() as conn:
-            cursor = conn.cursor()
-            
-            # Calculate content hashes if content provided
-            hash_before = None
-            hash_after = None
-            
-            if content_before is not None:
-                hash_before = self._calculate_content_hash(content_before)
-            
-            if content_after is not None:
-                hash_after = self._calculate_content_hash(content_after)
-            
-            # Convert changed_fields to JSON
-            changed_fields_json = None
-            if changed_fields:
-                changed_fields_json = json.dumps(changed_fields)
-            
-            # 🔒 DEDUPLICATION: Check if identical change already exists (within last 5 minutes)
-            cursor.execute('''
-                SELECT id FROM sync_changelog 
-                WHERE source_table = ? AND source_id = ? AND operation = ? 
-                AND content_hash_after = ? AND process_status = 'pending'
-                AND changed_at >= datetime('now', '-5 minutes')
-            ''', (source_table, source_id, operation, hash_after))
-            
-            existing_record = cursor.fetchone()
-            if existing_record:
-                logger.debug(f"🔄 Skipping duplicate {operation} for {source_table}:{source_id} (existing #{existing_record[0]})")
-                return existing_record[0]
-            
-            cursor.execute('''
-                INSERT INTO sync_changelog (
-                    source_table, source_id, operation, 
-                    changed_fields, content_hash_before, content_hash_after,
-                    trigger_source, process_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                source_table, source_id, operation,
-                changed_fields_json, hash_before, hash_after,
-                trigger_source, 'pending'
-            ))
-            
-            changelog_id = cursor.lastrowid
-            conn.commit()
-            
-            logger.debug(f"📝 Tracked {operation} for {source_table}:{source_id} (changelog #{changelog_id})")
-            return changelog_id
+        # 🔒 Pre-calculate hashes and data outside of database transaction
+        hash_before = self._calculate_content_hash(content_before) if content_before is not None else None
+        hash_after = self._calculate_content_hash(content_after) if content_after is not None else None
+        changed_fields_json = json.dumps(changed_fields) if changed_fields else None
+        
+        # 🔒 Use shorter, focused transactions to prevent locks
+        try:
+            with self.db_manager.get_connection_context() as conn:
+                cursor = conn.cursor()
+                
+                # Check for duplicates
+                cursor.execute('''
+                    SELECT id FROM sync_changelog 
+                    WHERE source_table = ? AND source_id = ? AND operation = ? 
+                    AND content_hash_after = ? AND process_status = 'pending'
+                    AND changed_at >= datetime('now', '-5 minutes')
+                ''', (source_table, source_id, operation, hash_after))
+                
+                existing_record = cursor.fetchone()
+                if existing_record:
+                    logger.debug(f"🔄 Skipping duplicate {operation} for {source_table}:{source_id} (existing #{existing_record[0]})")
+                    return existing_record[0]
+                
+                # Insert new record
+                cursor.execute('''
+                    INSERT INTO sync_changelog (
+                        source_table, source_id, operation, 
+                        changed_fields, content_hash_before, content_hash_after,
+                        trigger_source, process_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    source_table, source_id, operation,
+                    changed_fields_json, hash_before, hash_after,
+                    trigger_source, 'pending'
+                ))
+                
+                changelog_id = cursor.lastrowid
+                conn.commit()
+                
+                logger.debug(f"📝 Tracked {operation} for {source_table}:{source_id} (changelog #{changelog_id})")
+                return changelog_id
+                
+        except Exception as e:
+            # Handle database locks gracefully
+            if "database is locked" in str(e).lower():
+                logger.warning(f"⏱️ Database temporarily locked, skipping tracking for {source_table}:{source_id}")
+                return -1  # Indicate skipped
+            else:
+                logger.error(f"Failed to track change for {source_table}:{source_id}: {e}")
+                raise
     
     def track_notebook_change(self, notebook_uuid: str, operation: str, 
                             notebook_data: Optional[Dict] = None,
