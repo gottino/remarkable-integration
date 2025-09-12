@@ -401,6 +401,13 @@ class ReMarkableWatcher:
         
         logger.info("ReMarkableWatcher initialized")
     
+    async def on_file_change(self, event):
+        """Unified handler for file changes - combines sync completion and processing."""
+        logger.debug(f"🔄 File change detected: {event.src_path}")
+        
+        # Process the file immediately (unified single-watcher approach)
+        await self.on_file_ready_for_processing(event)
+    
     def set_text_extractor(self, text_extractor):
         """Set the text extractor for processing."""
         self.text_extractor = text_extractor
@@ -419,12 +426,10 @@ class ReMarkableWatcher:
             logger.info("Starting ReMarkable two-tier watching system...")
             
             # Start source watcher (monitors reMarkable app directory)
-            source_started = await self.source_watcher.start(self.on_sync_completed)
+            # Note: ProcessingWatcher disabled to avoid duplicate watching of same directory
+            source_started = await self.source_watcher.start(self.on_file_change)
             
-            # Start processing watcher (monitors source directory)
-            processing_started = await self.processing_watcher.start(self.on_file_ready_for_processing)
-            
-            if source_started and processing_started:
+            if source_started:
                 self.is_running = True
                 logger.info(" Two-tier watching system started successfully")
                 
@@ -447,7 +452,7 @@ class ReMarkableWatcher:
             logger.info("Stopping ReMarkable watching system...")
             
             await self.source_watcher.stop()
-            await self.processing_watcher.stop()
+            # ProcessingWatcher not used in unified approach
             
             self.is_running = False
             logger.info("ReMarkable watching system stopped")

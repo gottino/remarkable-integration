@@ -345,6 +345,17 @@ class NotionSyncTarget(SyncTarget):
                         children=[page_toggle]
                     )
                 
+                # 🔗 STORE BLOCK ID for todo linking
+                if response.get('results') and len(response['results']) > 0:
+                    new_block_id = response['results'][0]['id']
+                    await self._store_notion_page_block_mapping(
+                        notebook_uuid=item.data.get('notebook_uuid'),
+                        page_number=page_number,
+                        notion_page_id=page_id,
+                        notion_block_id=new_block_id
+                    )
+                    self.logger.debug(f"Stored block mapping: page {page_number} -> {new_block_id[:20]}...")
+                
                 self.logger.info(f"Successfully added page {page_number} toggle block to Notion page")
                 return True
                 
@@ -372,6 +383,13 @@ class NotionSyncTarget(SyncTarget):
                 # Update the existing block
                 success = await self._replace_notion_block_content(existing_block_id, page_number, page_text)
                 if success:
+                    # 🔗 STORE BLOCK ID for todo linking (update case)
+                    await self._store_notion_page_block_mapping(
+                        notebook_uuid=item.data.get('notebook_uuid'),
+                        page_number=page_number,
+                        notion_page_id=page_id,
+                        notion_block_id=existing_block_id
+                    )
                     self.logger.info(f"Successfully updated existing page {page_number} block")
                     return True
                 else:
@@ -668,6 +686,37 @@ class NotionSyncTarget(SyncTarget):
         except Exception as e:
             self.logger.error(f"Error loading notebook data for {notebook_uuid}: {e}")
             return None
+    
+    async def _store_notion_page_block_mapping(self, 
+                                             notebook_uuid: str, 
+                                             page_number: int,
+                                             notion_page_id: str, 
+                                             notion_block_id: str) -> None:
+        """Store the mapping between a reMarkable page and its Notion block ID."""
+        try:
+            # Get database connection
+            db_manager = await self._get_db_manager()
+            
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Insert or update the block mapping
+                cursor.execute('''
+                    INSERT OR REPLACE INTO notion_page_blocks 
+                    (notebook_uuid, page_number, notion_page_id, notion_block_id, updated_at)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (notebook_uuid, page_number, notion_page_id, notion_block_id))
+                
+                conn.commit()
+                self.logger.debug(f"Stored block mapping: {notebook_uuid}|p{page_number} -> {notion_block_id[:20]}...")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to store notion block mapping: {e}")
+    
+    async def _get_db_manager(self):
+        """Get database manager instance."""
+        from .database import DatabaseManager
+        return DatabaseManager('./data/remarkable_pipeline.db')
 
 
 class ReadwiseSyncTarget(SyncTarget):
