@@ -176,9 +176,15 @@ class SyncHookManager:
         """
         Determine if a notebook should have its content synced to external targets.
         
-        Only sync actual handwritten notebooks, not PDFs, EPUBs, or folders.
+        Only sync actual handwritten notebooks, not PDFs, EPUBs, folders, or trash items.
         """
         document_type = notebook_data.get('document_type', 'unknown').lower()
+        full_path = notebook_data.get('full_path', '')
+        
+        # 🗑️ Skip trash items (notebooks in trash folder)
+        if full_path.startswith('🗑️ Trash/'):
+            logger.debug(f"Skipping trash item: {notebook_data.get('visible_name', 'Unknown')}")
+            return False
         
         # 📚 Only sync handwritten notebooks
         if document_type == 'notebook':

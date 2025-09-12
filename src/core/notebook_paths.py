@@ -352,9 +352,16 @@ class NotebookPathManager:
         if item.parent is None:
             path = item.visible_name
         else:
-            # Recursive case: get parent path and append this item's name
-            parent_path = self.build_path(item.parent)
-            path = f"{parent_path}/{item.visible_name}"
+            # Handle special cases like "trash" or other missing parents
+            if item.parent == "trash":
+                path = f"🗑️ Trash/{item.visible_name}"
+            elif item.parent not in self.items:
+                # Silently handle missing parents (common for deleted items)
+                path = f"📁 {item.visible_name}"  # Treat as root-level
+            else:
+                # Recursive case: get parent path and append this item's name
+                parent_path = self.build_path(item.parent)
+                path = f"{parent_path}/{item.visible_name}"
         
         # Cache the result
         self.paths_cache[uuid] = path
