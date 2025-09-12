@@ -1,23 +1,18 @@
-# Two-Tier Watching System
+# Direct File Watching System
 
-The reMarkable Integration now features a sophisticated two-tier watching system that provides real-time processing of your handwritten notes with incremental updates.
+The reMarkable Integration features a streamlined file watching system that provides real-time processing of your handwritten notes with intelligent change detection.
 
 ## Architecture Overview
 
 ```
-reMarkable App Directory → [SourceWatcher] → [rsync] → Local Sync Directory → [ProcessingWatcher] → [Text Extraction]
-     (monitors changes)         (triggers)     (syncs)    (monitors locally)      (processes)        (incremental)
+reMarkable Source Directory → [FileWatcher] → [Change Detection] → [Text Extraction]
+     (monitors changes)         (processes)      (incremental)        (AI-powered)
 ```
 
-### Tier 1: Source Watching
+### Simplified Direct Processing
 - **Monitors**: Original reMarkable desktop app data directory
-- **Triggers**: rsync operations when files change
-- **Benefits**: Real-time change detection, no polling
-
-### Tier 2: Local Processing
-- **Monitors**: Local sync directory under our control
-- **Processes**: Changed files with incremental updates
-- **Benefits**: Safe processing, no interference with reMarkable app
+- **Processes**: Files directly without intermediate copying
+- **Benefits**: Real-time processing, reduced disk usage, simplified configuration
 
 ## Quick Start
 
@@ -38,12 +33,6 @@ remarkable:
   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Library/Application Support/remarkable/desktop"  # macOS
   # source_directory: "%APPDATA%/remarkable/desktop"  # Windows  
   # source_directory: "~/.local/share/remarkable/desktop"  # Linux
-  
-  # Local sync directory (will be created automatically)
-  local_sync_directory: "./data/remarkable_sync"
-  
-  # Sync settings
-  sync_debounce_seconds: 30  # Wait time after changes before syncing
 ```
 
 #### **Step 3: Verify Configuration**
@@ -51,9 +40,9 @@ remarkable:
 poetry run python -m src.cli.main config check
 ```
 
-#### **Step 4: Start the Complete Pipeline**
+#### **Step 4: Start the File Watching System**
 ```bash
-# Start the complete two-tier watching system with text extraction
+# Start the direct file watching system with text extraction
 poetry run python -m src.cli.main watch
 ```
 
@@ -62,21 +51,20 @@ poetry run python -m src.cli.main watch
 When you run the watch command, you'll see:
 
 ```
-🚀 Starting reMarkable two-tier watching system...
+🚀 Starting reMarkable file watching system...
 📁 Source: ~/Library/Containers/com.remarkable.desktop/Data/Library/Application Support/remarkable/desktop
-🔄 Local sync: ./data/remarkable_sync
 ⚙️  Sync on startup: Yes
 ⚡ Process immediately: Yes
 
-✅ Two-tier watching system started successfully!
-📡 Monitoring reMarkable app directory for changes...
-🔄 Syncing to local directory and processing automatically...
+✅ File watching system started successfully!
+📡 Monitoring reMarkable directory for changes...
+🔄 Processing files automatically...
 
 💡 The system will:
-   1. Watch your reMarkable app directory for changes
-   2. Automatically rsync changes to local directory
-   3. Process changed notebooks with incremental updates
-   4. Extract text using AI-powered OCR
+   1. Watch your reMarkable directory for changes
+   2. Process changed notebooks with incremental updates
+   3. Extract text using AI-powered OCR
+   4. Auto-sync processed notebooks to Notion
 
 Press Ctrl+C to stop watching...
 ```
@@ -86,26 +74,24 @@ Press Ctrl+C to stop watching...
 Once started, here's what happens automatically:
 
 1. **You write/edit in reMarkable app** → Changes saved to app directory
-2. **SourceWatcher detects change** → Triggers rsync after 30s debounce
-3. **SyncManager rsyncs files** → Copies to `./data/remarkable_sync/`
-4. **ProcessingWatcher detects local change** → Triggers text extraction
-5. **NotebookTextExtractor processes** → Uses incremental updates (only changed pages)
-6. **AI OCR extracts text** → Claude Vision reads your handwriting
-7. **Database stores results** → Searchable text with metadata
-8. **Ready for export/integration** → Notion, Readwise, etc.
+2. **FileWatcher detects change** → Triggers processing after debounce
+3. **Change detection analyzes files** → Identifies only modified pages
+4. **NotebookTextExtractor processes** → Uses incremental updates (only changed pages)
+5. **AI OCR extracts text** → Claude Vision reads your handwriting
+6. **Database stores results** → Searchable text with metadata
+7. **Ready for export/integration** → Notion, Readwise, etc.
 
 ### ⚡ **Advanced Startup Options**
 
 ```bash
-# Override directories if needed
+# Override source directory if needed
 poetry run python -m src.cli.main watch \
-  --source-directory "~/path/to/remarkable/data" \
-  --local-directory "./data/my_custom_sync"
+  --source-directory "~/path/to/remarkable/data"
 
 # Verbose logging to see what's happening
 poetry run python -m src.cli.main --verbose watch
 
-# Control sync behavior
+# Control processing behavior
 poetry run python -m src.cli.main watch \
   --sync-on-startup \
   --process-immediately
@@ -118,8 +104,7 @@ For testing without using your full reMarkable data:
 ```bash
 # 1. Update config for testing
 poetry run python -m src.cli.main watch \
-  --source-directory "./test_data/rm_files" \
-  --local-directory "./data/test_sync"
+  --source-directory "./test_data/rm_files"
 
 # 2. Add some test .content/.rm files to test_data/rm_files/
 # 3. Watch the pipeline process them automatically
@@ -143,7 +128,6 @@ poetry run python -m src.cli.main config api-key get
 - Make sure you have notebooks in your reMarkable app
 - Try making a change in a notebook to trigger detection  
 - Check the logs with `--verbose` flag
-- Verify rsync is installed: `which rsync`
 
 ### 💡 **Production Usage Tips**
 
@@ -174,7 +158,7 @@ poetry run python -m src.cli.main export --output results.csv
 
 # Export specific notebook text
 poetry run python -m src.cli.main text extract \
-  "./data/remarkable_sync" \
+  "~/Library/Containers/com.remarkable.desktop/Data/Library/Application Support/remarkable/desktop" \
   --output-dir "extracted_notes" \
   --format md
 ```
@@ -195,7 +179,7 @@ poetry run python -m src.cli.main text extract \
 
 ### ✅ Real-Time Processing
 - Detects changes immediately when you save notes in reMarkable app
-- Automatic rsync to local directory
+- Processes files directly from source directory
 - Processes only changed notebooks
 
 ### ✅ Incremental Updates
@@ -205,13 +189,13 @@ poetry run python -m src.cli.main text extract \
 - **Atomic updates**: Database transactions ensure consistency
 
 ### ✅ Smart Debouncing
-- Waits for changes to settle before syncing
-- Configurable debounce period (default: 30 seconds)
+- Waits for changes to settle before processing
+- Configurable debounce period (default: 5 seconds)
 - Handles rapid successive changes gracefully
 
 ### ✅ Safe Operation
-- Never touches original reMarkable app files
-- Processes local copies only
+- Read-only access to original reMarkable app files
+- Never modifies source files
 - Automatic backup support
 - Graceful error handling
 
@@ -219,29 +203,28 @@ poetry run python -m src.cli.main text extract \
 
 ```yaml
 remarkable:
-  # Core directories
+  # Core directory
   source_directory: "path/to/remarkable/app/data"
-  local_sync_directory: "./data/remarkable_sync"
   
-  # Sync behavior
-  sync_debounce_seconds: 30
-  sync_exclude_patterns:
-    - "*.tmp"
-    - "*.DS_Store"
-    - ".*"
+  # Exclusion patterns
+  exclude_notebooks:
+    names:
+      - "Template*"
+      - "*Draft*"
+    uuids:
+      - "uuid-to-exclude"
   
   # Processing settings
 processing:
   file_watching:
     enabled: true
     processing_cooldown: 5  # Seconds between processing same file
-    source_watch_patterns:
-      - "*.content"
-      - "*.metadata"
-      - "*.rm"
-    local_process_patterns:
+    watch_patterns:
       - "*.content"
       - "*.rm"
+    ignore_patterns:
+      - ".*"
+      - "*.tmp"
 ```
 
 ## Command Line Options
@@ -253,10 +236,7 @@ poetry run python -m src.cli.main watch
 # Override source directory
 poetry run python -m src.cli.main watch --source-directory "/path/to/remarkable/data"
 
-# Override local sync directory
-poetry run python -m src.cli.main watch --local-directory "./my_sync"
-
-# Control sync behavior
+# Control processing behavior
 poetry run python -m src.cli.main watch --sync-on-startup --process-immediately
 ```
 
@@ -325,16 +305,10 @@ remarkable:
 
 ### Permission Issues
 - Ensure read access to reMarkable app directory
-- Check write access to local sync directory
 - On macOS, may need to grant Terminal full disk access
-
-### rsync Not Found
-- Install rsync: `brew install rsync` (macOS) or appropriate package manager
-- Ensure rsync is in PATH
 
 ### No Processing Happening
 - Check that files are actually changing in source directory
-- Verify local sync directory is being populated
 - Check logs for error messages
 - Ensure API key is configured for OCR processing
 
@@ -342,7 +316,6 @@ remarkable:
 
 The system provides detailed logging of:
 - File change detection
-- Sync operations
 - Processing results
 - Incremental update decisions
 
@@ -354,20 +327,19 @@ poetry run python -m src.cli.main --verbose watch
 ## Performance
 
 ### Efficiency Gains
-- **Sync**: Only syncs when source changes (no polling)
 - **Processing**: Only processes changed pages (not entire notebooks)
 - **Database**: Indexed lookups for change detection
 - **Memory**: Minimal overhead with async operations
+- **Disk**: No intermediate file copying required
 
 ### Typical Performance
 - **Change detection**: < 1 second
-- **rsync operation**: 1-5 seconds (depending on changes)
 - **Incremental processing**: 2-10 seconds per changed page
 - **Database updates**: < 1 second
 
 ## Integration with Existing Workflows
 
-The two-tier watching system works seamlessly with:
+The direct file watching system works seamlessly with:
 - **Manual processing**: `text extract` command still works
 - **Batch processing**: `process directory` command still works  
 - **Export functions**: All export commands work with incrementally updated data
@@ -375,25 +347,26 @@ The two-tier watching system works seamlessly with:
 
 ## Migration from Legacy Setup
 
-If you're upgrading from the old single-directory watching:
+If you're upgrading from the old two-tier sync setup:
 
 1. **Update config**:
    ```yaml
    # Old
    remarkable:
      sync_directory: "/path/to/remarkable"
+     local_sync_directory: "./data/remarkable_sync"
    
-   # New
+   # New (simplified)
    remarkable:
      source_directory: "/path/to/remarkable/app/data"
-     local_sync_directory: "./data/remarkable_sync"
    ```
 
-2. **Run initial sync**:
+2. **Clean up old directories** (optional):
    ```bash
-   poetry run python -m src.cli.main watch --sync-on-startup
+   # Remove local sync directory if no longer needed
+   rm -rf ./data/remarkable_sync
    ```
 
-3. **Existing database**: Works seamlessly with new schema (automatic migration)
+3. **Existing database**: Works seamlessly with new architecture (no migration needed)
 
-The system is backward compatible and will automatically migrate your database schema.
+The system is backward compatible and your existing data will continue to work without any changes.

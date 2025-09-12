@@ -18,7 +18,7 @@ class Config:
     
     DEFAULT_CONFIG = {
         'remarkable': {
-            'sync_directory': None,
+            'source_directory': None,  # reMarkable Desktop sync location - direct processing
             'backup_directory': None,
         },
         'database': {
@@ -123,6 +123,9 @@ class Config:
             self.config_data = self._deep_merge(self.config_data, file_config)
             logger.info(f"Configuration loaded from {self.config_path}")
             
+            # Handle backward compatibility
+            self._migrate_legacy_config()
+            
         except Exception as e:
             logger.error(f"Error loading config file {self.config_path}: {e}")
             logger.info("Using default configuration")
@@ -130,7 +133,7 @@ class Config:
     def _load_env_variables(self):
         """Load configuration from environment variables."""
         env_mappings = {
-            'REMARKABLE_SYNC_DIR': ['remarkable', 'sync_directory'],
+            'REMARKABLE_SOURCE_DIR': ['remarkable', 'source_directory'],
             'REMARKABLE_DB_PATH': ['database', 'path'],
             'REMARKABLE_LOG_LEVEL': ['logging', 'level'],
             'REMARKABLE_LOG_FILE': ['logging', 'file'],
@@ -144,6 +147,20 @@ class Config:
             if value:
                 self._set_nested_value(self.config_data, config_path, value)
                 logger.debug(f"Set config from env var {env_var}")
+    
+    def _migrate_legacy_config(self):
+        """Migrate legacy configuration options for backward compatibility."""
+        # Migrate sync_directory to source_directory
+        if self.get('remarkable.sync_directory') and not self.get('remarkable.source_directory'):
+            sync_dir = self.get('remarkable.sync_directory')
+            self.set('remarkable.source_directory', sync_dir)
+            logger.info(f"Migrated legacy sync_directory to source_directory: {sync_dir}")
+            
+        # Also check for legacy environment variable
+        legacy_sync_dir = os.getenv('REMARKABLE_SYNC_DIR')
+        if legacy_sync_dir and not self.get('remarkable.source_directory'):
+            self.set('remarkable.source_directory', legacy_sync_dir)
+            logger.info(f"Migrated legacy REMARKABLE_SYNC_DIR to source_directory: {legacy_sync_dir}")
     
     def _deep_merge(self, base: Dict, override: Dict) -> Dict:
         """Deep merge two dictionaries."""
@@ -250,8 +267,8 @@ class Config:
 
 # reMarkable tablet settings
 remarkable:
-  # Path to reMarkable sync directory (required)
-  sync_directory: null  # e.g., "/Users/username/reMarkable"
+  # Path to reMarkable source directory - where reMarkable Desktop syncs (required)  
+  source_directory: null  # e.g., "/Users/username/reMarkable"
   # Path to backup directory (optional)
   backup_directory: null
 
@@ -336,11 +353,11 @@ logging:
         issues = []
         
         # Check required settings
-        sync_dir = self.get('remarkable.sync_directory')
-        if not sync_dir:
-            issues.append("remarkable.sync_directory is required")
-        elif not os.path.exists(sync_dir):
-            issues.append(f"remarkable.sync_directory does not exist: {sync_dir}")
+        source_dir = self.get('remarkable.source_directory')
+        if not source_dir:
+            issues.append("remarkable.source_directory is required")
+        elif not os.path.exists(source_dir):
+            issues.append(f"remarkable.source_directory does not exist: {source_dir}")
         
         # Check database path is writable
         db_path = Path(self.get('database.path'))
@@ -371,7 +388,7 @@ logging:
     
     def __str__(self) -> str:
         """String representation of configuration."""
-        return f"Config(path={self.config_path}, sync_dir={self.get('remarkable.sync_directory')})"
+        return f"Config(path={self.config_path}, source_dir={self.get('remarkable.source_directory')})"
     
     def __repr__(self) -> str:
         """Detailed string representation."""

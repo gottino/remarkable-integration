@@ -94,11 +94,8 @@ The system can be customized through the `config/config.yaml` file. Here are the
 ```yaml
 # reMarkable tablet settings
 remarkable:
-  # Path to reMarkable app data directory (for source files)
+  # Path to reMarkable app data directory (direct processing)
   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
-  
-  # Path to local sync directory (temporary processing)
-  local_sync_directory: "./data/remarkable_sync"
   
   # Path to application data directory (processed files, covers, etc.)
   data_directory: "./data"
@@ -145,7 +142,6 @@ WHERE document_type = 'epub';
 ```yaml
 remarkable:
   source_directory: "~/Library/Containers/com.remarkable.desktop/Data/Documents/remarkable"
-  local_sync_directory: "./data/remarkable_sync"
   data_directory: "./data"
 ```
 
@@ -153,7 +149,6 @@ remarkable:
 ```yaml
 remarkable:
   source_directory: "%APPDATA%/remarkable/desktop"
-  local_sync_directory: "./data/remarkable_sync" 
   data_directory: "./data"
 ```
 
@@ -161,7 +156,6 @@ remarkable:
 ```yaml
 remarkable:
   source_directory: "~/.local/share/remarkable/desktop"
-  local_sync_directory: "./data/remarkable_sync"
   data_directory: "./data"
 ```
 
@@ -169,7 +163,6 @@ remarkable:
 ```yaml
 remarkable:
   source_directory: "/remarkable/source"
-  local_sync_directory: "/data/remarkable_sync"
   data_directory: "/data"
 ```
 

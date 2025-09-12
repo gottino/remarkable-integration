@@ -231,7 +231,7 @@ poetry run python src/cli/main.py watch
 
 The watching system provides complete automation:
 - **Real-time monitoring**: Watches your reMarkable app directory for changes
-- **Automatic sync**: Rsyncs changes to local processing directory  
+- **Direct processing**: Processes files directly from source directory
 - **Smart processing**: Only processes changed notebooks with incremental OCR
 - **Auto-sync to Notion**: Immediately syncs processed notebooks with markdown formatting
 - **Intelligent updates**: Only updates Notion pages that have actually changed

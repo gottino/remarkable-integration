@@ -14,13 +14,13 @@ The reMarkable Integration CLI provides a comprehensive command-line interface f
    poetry run python -m src.cli.main config init
    ```
 
-3. **Configure your reMarkable sync directory:**
+3. **Configure your reMarkable source directory:**
    ```bash
    # Edit the generated config.yaml file
    nano config.yaml
    
-   # Or initialize with sync directory directly
-   poetry run python -m src.cli.main config init --sync-dir "/path/to/remarkable"
+   # Or initialize with source directory directly
+   poetry run python -m src.cli.main config init --source-dir "/path/to/remarkable"
    ```
 
 4. **Verify setup:**
@@ -109,12 +109,12 @@ poetry run python -m src.cli.main process-all "/path/to/data" --output-dir "note
 
 By default, all processing commands automatically update notebook metadata before processing:
 
-- **📂 Smart Directory Detection**: Automatically finds your reMarkable sync directory
+- **📂 Smart Directory Detection**: Automatically finds your reMarkable source directory
 - **⚡ Fresh Data**: Ensures folder paths and timestamps are current
 - **🛡️ Graceful Fallback**: Continues with existing data if update fails
 - **⏭️ Skip Option**: Use `--skip-metadata-update` for faster processing
 
-**Common sync directory locations:**
+**Common source directory locations:**
 - **macOS**: `~/Library/Containers/com.remarkable.desktop/Data/Library/Application Support/remarkable/desktop`
 - **Windows**: `%USERPROFILE%\AppData\Local\remarkable\desktop`
 - **Linux**: `~/.local/share/remarkable/desktop`
@@ -281,7 +281,7 @@ The CLI supports extensive configuration through `config.yaml`:
 
 ```yaml
 remarkable:
-  sync_directory: "/Users/yourname/reMarkable"
+  source_directory: "/Users/yourname/reMarkable"
   backup_directory: "/Users/yourname/reMarkable/backups"
 
 processing:
@@ -331,9 +331,9 @@ poetry run python -m src.cli.main -c debug-config.yaml process directory /path/t
 
 #### Configuration Not Found
 ```bash
-# Error: Configuration issues found: remarkable.sync_directory is required
+# Error: Configuration issues found: remarkable.source_directory is required
 # Solution: Initialize and configure
-poetry run python -m src.cli.main config init --sync-dir "/path/to/remarkable"
+poetry run python -m src.cli.main config init --source-dir "/path/to/remarkable"
 ```
 
 #### Permission Errors
@@ -346,7 +346,7 @@ poetry run python -m src.cli.main config show --section database
 #### No Files Found
 ```bash
 # Error: No .content files found
-# Solution: Verify sync directory contains reMarkable files
+# Solution: Verify source directory contains reMarkable files
 ls -la "/path/to/remarkable/"
 ```
 
