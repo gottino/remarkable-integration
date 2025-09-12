@@ -491,25 +491,10 @@ class NotebookPathManager:
                 
                 # Transaction commits here automatically
             
-            # Track notebook changes AFTER the main transaction is complete
-            # This prevents deadlocks by avoiding nested transactions
-            for uuid, item in self.items.items():
-                try:
-                    path = self.build_path(uuid)
-                    notebook_data = {
-                        'visible_name': item.visible_name,
-                        'full_path': path,
-                        'document_type': item.document_type,
-                        'last_modified': item.last_modified,
-                        'last_opened': item.last_opened,
-                        'authors': item.authors,
-                        'publisher': item.publisher,
-                        'deleted': item.deleted,
-                        'pinned': item.pinned
-                    }
-                    track_notebook_operation('INSERT', uuid, data=notebook_data, trigger_source='metadata_update')
-                except Exception as e:
-                    logger.warning(f"Failed to track notebook metadata change for {uuid}: {e}")
+            # 🚫 DO NOT track all notebooks as changes!
+            # This function is a bulk database refresh and should not trigger sync tracking
+            # Individual notebook changes should be tracked only when they actually change
+            logger.debug("Bulk metadata refresh complete - no sync tracking needed")
             
             logger.info(f"Stored {stored_count} notebook metadata records in database")
             return stored_count
@@ -617,7 +602,56 @@ def update_changed_metadata_only(remarkable_dir: str, db_connection, changed_uui
         
     logger.info(f"🔄 Updating {len(changed_uuids)} changed metadata records in database...")
     manager = NotebookPathManager(remarkable_dir, db_connection, data_dir)
-    return manager.update_database_metadata()
+    manager.scan_metadata_files()
+    manager.build_all_paths()
+    
+    updated_count = 0
+    with db_connection:
+        cursor = db_connection.cursor()
+        
+        for uuid in changed_uuids:
+            if uuid in manager.items:
+                item = manager.items[uuid]
+                path = manager.build_path(uuid)
+                
+                # Update or insert the specific record
+                cursor.execute('''
+                    INSERT OR REPLACE INTO notebook_metadata 
+                    (notebook_uuid, visible_name, full_path, parent_uuid, item_type, document_type,
+                     authors, publisher, publication_date, cover_image_path,
+                     last_modified, last_opened, last_opened_page, deleted, pinned, synced, version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    uuid, item.visible_name, path, item.parent, item.item_type, item.document_type,
+                    item.authors, item.publisher, item.publication_date, item.cover_image_path,
+                    item.last_modified, item.last_opened, item.last_opened_page,
+                    item.deleted, item.pinned, item.synced, item.version
+                ))
+                
+                # 🔒 Only track changes for actual notebooks (not PDFs/EPUBs)
+                if item.document_type == 'notebook':
+                    try:
+                        from .sync_hooks import track_notebook_operation
+                        notebook_data = {
+                            'visible_name': item.visible_name,
+                            'full_path': path,
+                            'document_type': item.document_type,
+                            'last_modified': item.last_modified,
+                            'last_opened': item.last_opened
+                        }
+                        track_notebook_operation('UPDATE', uuid, data=notebook_data, trigger_source='selective_metadata_update')
+                        logger.debug(f"📝 Tracked selective metadata change for notebook: {item.visible_name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to track selective metadata change for {uuid}: {e}")
+                else:
+                    logger.debug(f"🚫 Skipping sync tracking for non-notebook: {item.visible_name} (type: {item.document_type})")
+                
+                updated_count += 1
+            else:
+                logger.warning(f"UUID {uuid} not found in current metadata scan")
+    
+    logger.info(f"✅ Updated {updated_count} changed metadata records")
+    return updated_count
 
 def update_notebook_metadata(remarkable_dir: str, db_connection, data_dir: str = None) -> int:
     """Convenience function to update notebook metadata in database."""

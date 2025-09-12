@@ -52,6 +52,11 @@ class SyncHookManager:
         if not self.enabled:
             return
         
+        # 🔒 CONTENT FILTERING: Only track notebooks that should sync content
+        if not self._should_sync_notebook_content(notebook_data):
+            logger.debug(f"🚫 Skipping notebook sync tracking for non-content type: {notebook_uuid}")
+            return
+        
         try:
             self.change_tracker.track_notebook_change(
                 notebook_uuid=notebook_uuid,
@@ -67,6 +72,11 @@ class SyncHookManager:
                             trigger_source: str = 'system') -> None:
         """Hook for when a notebook is updated."""
         if not self.enabled:
+            return
+        
+        # 🔒 CONTENT FILTERING: Only track notebooks that should sync content
+        if not self._should_sync_notebook_content(updated_fields):
+            logger.debug(f"🚫 Skipping notebook sync tracking for non-content type: {notebook_uuid}")
             return
         
         try:
@@ -161,6 +171,26 @@ class SyncHookManager:
     def get_pending_changes_summary(self) -> Dict[str, Any]:
         """Get a summary of pending changes for monitoring."""
         return self.change_tracker.get_sync_health_metrics()
+    
+    def _should_sync_notebook_content(self, notebook_data: Dict) -> bool:
+        """
+        Determine if a notebook should have its content synced to external targets.
+        
+        Only sync actual handwritten notebooks, not PDFs, EPUBs, or folders.
+        """
+        document_type = notebook_data.get('document_type', 'unknown').lower()
+        
+        # 📚 Only sync handwritten notebooks
+        if document_type == 'notebook':
+            return True
+        
+        # 🚫 Skip PDFs, EPUBs, folders, and other non-notebook types
+        if document_type in ['pdf', 'epub', 'folder', 'unknown']:
+            return False
+        
+        # 🤔 For unknown types, be conservative and skip
+        logger.debug(f"Unknown document type '{document_type}' - skipping sync")
+        return False
 
 
 def with_change_tracking(hook_manager: SyncHookManager, 

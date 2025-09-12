@@ -3,7 +3,7 @@ File Watching System for reMarkable Integration
 
 Implements a two-tier watching system:
 1. SourceWatcher - Monitors the original reMarkable app directory
-2. ProcessingWatcher - Monitors the local sync directory for processing
+2. ProcessingWatcher - Monitors the source directory for processing
 
 This approach provides real-time responsiveness while maintaining processing reliability.
 """
@@ -36,8 +36,9 @@ class SyncEvent:
     timestamp: datetime
     
 
-class SyncManager:
-    """Manages rsync operations between source and target directories."""
+# NOTE: SyncManager disabled - processing now happens directly from source directory
+# class SyncManager:
+#     """Manages rsync operations between source and target directories."""
     
     def __init__(self, config: Config):
         self.config = config
@@ -148,9 +149,8 @@ class SyncManager:
 class SourceWatcher:
     """Watches the original reMarkable app directory for changes."""
     
-    def __init__(self, config: Config, sync_manager: SyncManager):
+    def __init__(self, config: Config):
         self.config = config
-        self.sync_manager = sync_manager
         self.source_dir = Path(config.get('remarkable.source_directory', ''))
         
         self.observer = None
@@ -181,8 +181,8 @@ class SourceWatcher:
             
             logger.info(f"SourceWatcher started, monitoring: {self.source_dir}")
             
-            # Perform initial sync
-            await self.sync_manager.sync_if_needed(force=True)
+            # Initial sync no longer needed with event-driven sync system
+            # await self.sync_manager.sync_if_needed(force=True)
             
             return True
             
@@ -206,10 +206,7 @@ class SourceWatcher:
         if self._should_ignore_file(event.src_path):
             return
         
-        # Trigger sync
-        await self.sync_manager.sync_if_needed()
-        
-        # Call sync callback if provided
+        # Call sync callback if provided (processing happens directly from source)
         if self._sync_callback:
             try:
                 await self._sync_callback(event)
@@ -253,11 +250,11 @@ class SourceEventHandler(FileSystemEventHandler):
 
 
 class ProcessingWatcher:
-    """Watches the local sync directory and triggers processing."""
+    """Watches the reMarkable source directory and triggers processing."""
     
     def __init__(self, config: Config):
         self.config = config
-        self.local_dir = Path(config.get('remarkable.local_sync_directory', './data/remarkable_sync'))
+        self.source_dir = Path(config.get('remarkable.source_directory', ''))
         
         self.observer = None
         self.is_running = False
@@ -267,13 +264,13 @@ class ProcessingWatcher:
         self._recently_processed: Dict[str, datetime] = {}
         self._processing_cooldown = timedelta(seconds=5)
         
-        logger.info(f"ProcessingWatcher initialized for: {self.local_dir}")
+        logger.info(f"ProcessingWatcher initialized for: {self.source_dir}")
     
     async def start(self, processing_callback: Optional[Callable] = None):
-        """Start watching the local sync directory."""
-        if not self.local_dir.exists():
-            logger.warning(f"Local sync directory does not exist, creating: {self.local_dir}")
-            self.local_dir.mkdir(parents=True, exist_ok=True)
+        """Start watching the source directory."""
+        if not self.source_dir.exists():
+            logger.warning(f"Source directory does not exist, creating: {self.source_dir}")
+            self.source_dir.mkdir(parents=True, exist_ok=True)
         
         self._processing_callback = processing_callback
         
@@ -283,13 +280,13 @@ class ProcessingWatcher:
             
             # Set up observer
             self.observer = Observer()
-            self.observer.schedule(event_handler, str(self.local_dir), recursive=True)
+            self.observer.schedule(event_handler, str(self.source_dir), recursive=True)
             
             # Start observer
             self.observer.start()
             self.is_running = True
             
-            logger.info(f"ProcessingWatcher started, monitoring: {self.local_dir}")
+            logger.info(f"ProcessingWatcher started, monitoring: {self.source_dir}")
             return True
             
         except Exception as e:
@@ -297,7 +294,7 @@ class ProcessingWatcher:
             return False
     
     async def stop(self):
-        """Stop watching the local sync directory."""
+        """Stop watching the source directory."""
         if self.observer and self.is_running:
             self.observer.stop()
             self.observer.join()
@@ -305,7 +302,7 @@ class ProcessingWatcher:
             logger.info("ProcessingWatcher stopped")
     
     async def on_local_change(self, event: FileSystemEvent):
-        """Handle file changes in local sync directory."""
+        """Handle file changes in source directory."""
         file_path = event.src_path
         
         # Filter out files we don't want to process
@@ -392,8 +389,7 @@ class ReMarkableWatcher:
         self.config = config
         
         # Initialize components
-        self.sync_manager = SyncManager(config)
-        self.source_watcher = SourceWatcher(config, self.sync_manager)
+        self.source_watcher = SourceWatcher(config)
         self.processing_watcher = ProcessingWatcher(config)
         
         # Processing components (will be injected)
@@ -425,7 +421,7 @@ class ReMarkableWatcher:
             # Start source watcher (monitors reMarkable app directory)
             source_started = await self.source_watcher.start(self.on_sync_completed)
             
-            # Start processing watcher (monitors local sync directory)
+            # Start processing watcher (monitors source directory)
             processing_started = await self.processing_watcher.start(self.on_file_ready_for_processing)
             
             if source_started and processing_started:
@@ -529,7 +525,7 @@ class ReMarkableWatcher:
             logger.error(f"Error in metadata-driven processing: {e}")
     
     async def on_file_ready_for_processing(self, event: FileSystemEvent):
-        """Called when a file in local sync directory is ready for processing."""
+        """Called when a file in source directory is ready for processing."""
         # Skip individual file processing - we now use metadata-driven batch processing
         # after sync completion for better efficiency and accuracy
         logger.debug(f"File ready: {event.src_path} (will be processed in metadata-driven batch)")
@@ -647,6 +643,7 @@ class ReMarkableWatcher:
         while self.is_running:
             try:
                 await asyncio.sleep(30)  # Check every 30 seconds
-                await self.sync_manager.schedule_delayed_sync()
+                # Delayed sync no longer needed with event-driven sync system
+                # await self.sync_manager.schedule_delayed_sync()
             except Exception as e:
                 logger.error(f"Error in sync maintenance task: {e}")

@@ -104,24 +104,24 @@ def config(ctx):
 
 @config.command('init')
 @click.option('--output', '-o', default='config.yaml', help='Output configuration file path')
-@click.option('--sync-dir', help='reMarkable sync directory path')
-def config_init(output: str, sync_dir: Optional[str]):
+@click.option('--source-dir', help='reMarkable source directory path')
+def config_init(output: str, source_dir: Optional[str]):
     """Initialize configuration file with example settings."""
     
     config_obj = Config()
     
-    # Set sync directory if provided
-    if sync_dir:
-        if not os.path.exists(sync_dir):
-            click.echo(f"Warning: Sync directory does not exist: {sync_dir}", err=True)
-        config_obj.set('remarkable.sync_directory', sync_dir)
+    # Set source directory if provided
+    if source_dir:
+        if not os.path.exists(source_dir):
+            click.echo(f"Warning: Source directory does not exist: {source_dir}", err=True)
+        config_obj.set('remarkable.source_directory', source_dir)
     
     try:
         config_obj.create_example_config(output)
         click.echo(f"Configuration template created: {output}")
         click.echo("\nNext steps:")
         click.echo(f"1. Edit {output} with your settings")
-        click.echo("2. Set your reMarkable sync directory")
+        click.echo("2. Set your reMarkable source directory")
         click.echo("3. Run 'remarkable-integration config check' to validate")
         
     except Exception as e:
@@ -142,7 +142,7 @@ def config_check(ctx):
         
         # Show key settings
         click.echo("\nKey settings:")
-        click.echo(f"  Sync directory: {config_obj.get('remarkable.sync_directory')}")
+        click.echo(f"  Source directory: {config_obj.get('remarkable.source_directory')}")
         click.echo(f"  Database path: {config_obj.get('database.path')}")
         click.echo(f"  Log level: {config_obj.get('logging.level')}")
         
@@ -1219,10 +1219,10 @@ def ocr_pdf_file(ctx, file_path: str, language: str, confidence: float, show: bo
 def _find_remarkable_sync_directory(config_obj, fallback_dir: str) -> Optional[str]:
     """Find the best reMarkable sync directory for metadata updates."""
     
-    # 1. Try configured sync directory first
-    configured_sync = config_obj.get('remarkable.sync_directory')
-    if configured_sync and os.path.exists(configured_sync):
-        return configured_sync
+    # 1. Try configured source directory first
+    configured_source = config_obj.get('remarkable.source_directory')
+    if configured_source and os.path.exists(configured_source):
+        return configured_source
     
     # 2. Try common reMarkable Desktop sync locations
     import platform
@@ -1446,7 +1446,7 @@ def update_notebook_paths(ctx, remarkable_dir: Optional[str]):
     
     # Use provided directory or get from config
     if not remarkable_dir:
-        remarkable_dir = config_obj.get('remarkable.sync_directory')
+        remarkable_dir = config_obj.get('remarkable.source_directory')
     
     if not remarkable_dir:
         click.echo("❌ Error: No reMarkable directory specified", err=True)
@@ -1556,14 +1556,13 @@ def export_data(ctx, output: str, enhanced: bool, ocr: bool, title: Optional[str
 
 @cli.command('watch')
 @click.option('--source-directory', help='reMarkable app directory to watch (overrides config)')
-@click.option('--local-directory', help='Local sync directory (overrides config)')
 @click.option('--database', help='Database path (overrides config)')
 @click.option('--sync-on-startup', is_flag=True, default=True, help='Perform initial sync on startup')
 @click.option('--process-immediately', is_flag=True, default=True, help='Process files immediately after sync')
 @click.pass_context
-def watch_directory(ctx, source_directory: Optional[str], local_directory: Optional[str], 
+def watch_directory(ctx, source_directory: Optional[str], 
                    database: Optional[str], sync_on_startup: bool, process_immediately: bool):
-    """Watch reMarkable directory for changes and process automatically with two-tier system."""
+    """Watch reMarkable source directory for changes and process automatically."""
     
     config_obj = ctx.obj['config']
     
@@ -1574,14 +1573,11 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
     # Override config with command line options if provided
     if source_directory:
         config_obj.set('remarkable.source_directory', source_directory)
-    if local_directory:
-        config_obj.set('remarkable.local_sync_directory', local_directory)
     if database:
         config_obj.set('database.path', database)
     
     # Validate configuration
     source_dir = config_obj.get('remarkable.source_directory')
-    local_sync_dir = config_obj.get('remarkable.local_sync_directory', './data/remarkable_sync')
     
     if not source_dir:
         click.echo("❌ Source directory not configured", err=True)
@@ -1604,16 +1600,15 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
     # Initialize text extractor with database manager for thread safety
     exclude_notebooks = config_obj.get('remarkable.exclude_notebooks', {})
     text_extractor = NotebookTextExtractor(
-        data_directory=local_sync_dir,
+        data_directory=source_dir,
         db_manager=db_manager,
         exclude_notebooks=exclude_notebooks
     )
     
     # Initialize the two-tier watcher system
     try:
-        click.echo("🚀 Starting reMarkable two-tier watching system...")
+        click.echo("🚀 Starting reMarkable file watching system...")
         click.echo(f"📁 Source: {source_dir}")
-        click.echo(f"🔄 Local sync: {local_sync_dir}")
         click.echo(f"⚙️  Sync on startup: {'Yes' if sync_on_startup else 'No'}")
         click.echo(f"⚡ Process immediately: {'Yes' if process_immediately else 'No'}")
         click.echo()
@@ -1644,11 +1639,11 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
                 
                 # Do initial metadata change detection and update once at startup
                 with db_manager.get_connection() as conn:
-                    changed_uuids = detect_metadata_changes(source_dir, conn, "./data")
+                    changed_uuids = detect_metadata_changes(source_dir, conn, source_dir)
                     
                     if changed_uuids:
                         # Update changed metadata in database
-                        update_changed_metadata_only(source_dir, conn, changed_uuids, "./data")
+                        update_changed_metadata_only(source_dir, conn, changed_uuids, source_dir)
                         
                         # Update corresponding Notion pages
                         notion_client.refresh_notion_metadata_for_specific_notebooks(conn, changed_uuids)
@@ -1706,16 +1701,15 @@ def watch_directory(ctx, source_directory: Optional[str], local_directory: Optio
                     click.echo("❌ Failed to start watching system", err=True)
                     return False
                 
-                click.echo("✅ Two-tier watching system started successfully!")
-                click.echo("📡 Monitoring reMarkable app directory for changes...")
-                click.echo("🔄 Syncing to local directory and processing automatically...")
+                click.echo("✅ File watching system started successfully!")
+                click.echo("📡 Monitoring reMarkable directory for changes...")
+                click.echo("🔄 Processing files automatically...")
                 click.echo("\n💡 The system will:")
-                click.echo("   1. Watch your reMarkable app directory for changes")
-                click.echo("   2. Automatically rsync changes to local directory") 
-                click.echo("   3. Process changed notebooks with incremental updates")
-                click.echo("   4. Extract text using AI-powered OCR")
+                click.echo("   1. Watch your reMarkable directory for changes")
+                click.echo("   2. Process changed notebooks with incremental updates")
+                click.echo("   3. Extract text using AI-powered OCR")
                 if watcher.notion_sync_client:
-                    click.echo("   5. Auto-sync processed notebooks to Notion")
+                    click.echo("   4. Auto-sync processed notebooks to Notion")
                 click.echo("\nPress Ctrl+C to stop watching...")
                 
                 # Keep running until interrupted
@@ -1883,6 +1877,463 @@ def sync_notion(ctx, token: Optional[str], database_id: str, update_existing: bo
         if ctx.obj.get('verbose'):
             import traceback
             traceback.print_exc()
+        sys.exit(1)
+
+
+@cli.group()
+@click.pass_context
+def sync(ctx):
+    """Event-driven sync engine commands."""
+    pass
+
+
+@sync.command('status')
+@click.option('--database', help='Database path (overrides config)')
+@click.pass_context
+def sync_status(ctx, database: Optional[str]):
+    """Show sync engine status and statistics."""
+    
+    config_obj = ctx.obj['config']
+    db_path = database or config_obj.get('database.path')
+    
+    try:
+        from src.core.database import DatabaseManager
+        from src.core.sync_queue import SyncQueueProcessor
+        from src.core.sync_targets import create_sync_target
+        
+        db_manager = DatabaseManager(db_path)
+        processor = SyncQueueProcessor(db_manager)
+        
+        # Get status (this is a sync call, but status checking should be fast)
+        import asyncio
+        status = asyncio.run(processor.get_sync_status())
+        
+        click.echo("📊 Sync Engine Status")
+        click.echo("=" * 50)
+        
+        # Overall status
+        click.echo(f"Running: {'Yes' if status.get('is_running') else 'No'}")
+        click.echo(f"Pending changes: {status.get('pending_changes', 'Unknown')}")
+        
+        # Target status
+        targets = status.get('targets', {})
+        if targets:
+            click.echo("\n🎯 Sync Targets:")
+            for name, info in targets.items():
+                connected = "✅" if info.get('connected') else "❌"
+                click.echo(f"  {connected} {name}: {info.get('synced_items_count', 0)} items")
+        else:
+            click.echo("\n⚠️  No sync targets configured")
+        
+        # Sync records stats
+        sync_records = status.get('sync_records', {})
+        if sync_records:
+            click.echo("\n📈 Sync Statistics:")
+            click.echo(f"  Total records: {sync_records.get('total_records', 0)}")
+            
+            status_counts = sync_records.get('status_counts', {})
+            for status_name, count in status_counts.items():
+                click.echo(f"  {status_name}: {count}")
+            
+            recent = sync_records.get('recent_activity_24h', 0)
+            click.echo(f"  Recent activity (24h): {recent}")
+        
+        # Configuration
+        config = status.get('config', {})
+        if config:
+            click.echo("\n⚙️  Configuration:")
+            click.echo(f"  Batch size: {config.get('batch_size')}")
+            click.echo(f"  Max retries: {config.get('max_retries')}")
+            click.echo(f"  Concurrent syncs: {config.get('concurrent_syncs')}")
+            
+    except ImportError:
+        click.echo("❌ Sync engine components not available", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Error getting sync status: {e}", err=True)
+        sys.exit(1)
+
+
+@sync.command('test')
+@click.option('--database', help='Database path (overrides config)')
+@click.option('--target', default='mock', help='Target type to test (mock, notion)')
+@click.option('--fail-rate', default=0.0, type=float, help='Failure rate for mock target (0.0-1.0)')
+@click.option('--items', default=5, type=int, help='Number of test items to sync')
+@click.pass_context
+def sync_test(ctx, database: Optional[str], target: str, fail_rate: float, items: int):
+    """Test the sync engine with mock data."""
+    
+    config_obj = ctx.obj['config']
+    db_path = database or config_obj.get('database.path')
+    
+    try:
+        import asyncio
+        from datetime import datetime
+        from src.core.database import DatabaseManager
+        from src.core.sync_queue import SyncQueueProcessor
+        from src.core.sync_targets import create_sync_target
+        from src.core.sync_engine import SyncItem, SyncItemType
+        
+        async def run_test():
+            db_manager = DatabaseManager(db_path)
+            processor = SyncQueueProcessor(db_manager)
+            
+            # Create test target
+            if target == 'mock':
+                test_target = create_sync_target('mock', fail_rate=fail_rate)
+            else:
+                click.echo(f"❌ Target type '{target}' not yet supported for testing", err=True)
+                return
+            
+            processor.add_target(test_target)
+            
+            click.echo(f"🧪 Testing sync engine with {target} target")
+            click.echo(f"📊 Items to sync: {items}")
+            click.echo(f"💥 Failure rate: {fail_rate}")
+            click.echo()
+            
+            # Create test sync items
+            test_items = []
+            for i in range(items):
+                item = SyncItem(
+                    item_type=SyncItemType.NOTEBOOK,
+                    item_id=f"test-notebook-{i}",
+                    content_hash=f"hash{i:03d}",
+                    data={
+                        'title': f'Test Notebook {i}',
+                        'text_content': f'This is test content for notebook {i}',
+                        'page_count': i + 1
+                    },
+                    source_table='notebook_text_extractions',
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                )
+                test_items.append(item)
+            
+            # Sync test items
+            click.echo("🚀 Starting sync test...")
+            results = []
+            
+            for i, item in enumerate(test_items):
+                result = await test_target.sync_item(item)
+                results.append(result)
+                
+                status_emoji = "✅" if result.success else "❌"
+                click.echo(f"  {status_emoji} Item {i+1}: {result.status.value}")
+                
+                if result.error_message:
+                    click.echo(f"    Error: {result.error_message}")
+            
+            # Summary
+            success_count = sum(1 for r in results if r.success)
+            click.echo()
+            click.echo(f"📊 Test Results:")
+            click.echo(f"  ✅ Successful: {success_count}/{len(results)}")
+            click.echo(f"  ❌ Failed: {len(results) - success_count}/{len(results)}")
+            
+            # Target info
+            target_info = test_target.get_target_info()
+            click.echo(f"\n🎯 Target Info:")
+            click.echo(f"  Connected: {target_info.get('connected')}")
+            click.echo(f"  Total syncs: {target_info.get('total_syncs')}")
+            click.echo(f"  Items stored: {target_info.get('synced_items_count')}")
+        
+        # Run the async test
+        asyncio.run(run_test())
+        
+    except ImportError as e:
+        click.echo(f"❌ Import error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Test failed: {e}", err=True)
+        sys.exit(1)
+
+
+@sync.command('migrate')
+@click.option('--database', help='Database path (overrides config)')
+@click.option('--analyze-only', is_flag=True, help='Only analyze migration requirements, do not execute')
+@click.option('--phase', type=int, help='Execute specific migration phase (1, 2, or 3)')
+@click.option('--days-back', default=7, type=int, help='For phase 2: only process changes from last N days')
+@click.option('--dry-run', is_flag=True, help='Simulate migration without making changes')
+@click.pass_context
+def sync_migrate(ctx, database: Optional[str], analyze_only: bool, phase: Optional[int], days_back: int, dry_run: bool):
+    """Migrate from legacy sync to event-driven sync engine."""
+    
+    config_obj = ctx.obj['config']
+    db_path = database or config_obj.get('database.path')
+    
+    try:
+        import asyncio
+        from src.core.database import DatabaseManager
+        from src.core.sync_migration import SyncMigrationAnalyzer
+        
+        async def run_migration():
+            db_manager = DatabaseManager(db_path)
+            analyzer = SyncMigrationAnalyzer(db_manager)
+            
+            click.echo("🔍 Analyzing current sync state...")
+            analysis = await analyzer.analyze_migration_state()
+            
+            # Display analysis results
+            pending = analysis.get('pending_changes', {})
+            content_map = analysis.get('content_mapping', {})
+            
+            click.echo("\n📊 Migration Analysis:")
+            click.echo("=" * 50)
+            click.echo(f"Total pending changes: {pending.get('total_pending', 0)}")
+            click.echo(f"Already mapped to Notion: {content_map.get('mapped_count', 0)}")
+            click.echo(f"Needs initial sync: {content_map.get('unmapped_count', 0)}")
+            
+            # Show pending changes by type
+            pending_by_type = pending.get('by_table_and_type', {})
+            if pending_by_type:
+                click.echo("\n📄 Pending changes by type:")
+                for table, changes in pending_by_type.items():
+                    total = sum(changes.values())
+                    click.echo(f"  {table}: {total} changes")
+                    for change_type, count in changes.items():
+                        click.echo(f"    {change_type}: {count}")
+            
+            # Show migration plan
+            plan = analysis.get('migration_plan', {})
+            if plan.get('phases'):
+                click.echo("\n🛣️  Migration Plan:")
+                for phase_info in plan['phases']:
+                    click.echo(f"  Phase {phase_info['phase']}: {phase_info['name']}")
+                    click.echo(f"    ⏱️  {phase_info['estimated_time']}")
+                    click.echo(f"    📄 {phase_info['description']}")
+                    if phase_info.get('items_affected'):
+                        click.echo(f"    🎯 {phase_info['items_affected']} items")
+            
+            # Show risks
+            risks = analysis.get('risk_assessment', {})
+            high_risks = risks.get('high_risk', [])
+            if high_risks:
+                click.echo("\n⚠️  High-Risk Issues:")
+                for risk in high_risks:
+                    click.echo(f"  ⚠️  {risk['risk']}")
+                    click.echo(f"      Impact: {risk['impact']}")
+                    
+                    # Show mitigation strategies
+                    mitigations = risks.get('mitigation_strategies', {})
+                    if 'large_backlog' in mitigations:
+                        click.echo("      Mitigation:")
+                        for strategy in mitigations['large_backlog']:
+                            click.echo(f"        • {strategy}")
+            
+            if analyze_only:
+                click.echo("\n📊 Analysis complete. Use --phase to execute migration phases.")
+                return
+            
+            # Execute specific phase if requested
+            if phase == 1:
+                click.echo("\n🚀 Executing Phase 1: Establish Baseline")
+                result = await analyzer.execute_baseline_establishment(None, dry_run=dry_run)
+                
+                if result.get('dry_run'):
+                    click.echo(f"  🧪 Simulated analysis of {result.get('pages_analyzed', 0)} pages")
+                    click.echo(f"  📊 Would create ~{result.get('estimated_mappings', 0)} mappings")
+                else:
+                    click.echo(f"  ❌ Phase 1 requires Notion API integration (not yet implemented)")
+                    
+            elif phase == 2:
+                click.echo(f"\n🚀 Executing Phase 2: Process Recent Changes (last {days_back} days)")
+                result = await analyzer.execute_incremental_migration(days_back=days_back, dry_run=dry_run)
+                
+                click.echo(f"  📅 Cutoff date: {result.get('cutoff_date')}")
+                click.echo(f"  🔄 Recent changes to process: {result.get('recent_changes', 0)}")
+                click.echo(f"  ⏭️  Older changes to skip: {result.get('older_changes_to_skip', 0)}")
+                
+                if not dry_run and result.get('older_changes_marked'):
+                    click.echo(f"  ✅ Marked {result['older_changes_marked']} older changes as processed")
+                elif dry_run:
+                    click.echo(f"  🧪 Dry run - no changes made")
+                    
+            elif phase == 3:
+                click.echo("\n🚀 Phase 3: Enable Real-time Sync")
+                click.echo("  📝 This phase involves configuration changes:")
+                click.echo("    1. Enable event-driven sync in watch command")
+                click.echo("    2. Disable legacy sync methods")
+                click.echo("    3. Monitor for 24 hours")
+                click.echo("  ⚠️  Manual configuration required")
+                
+            else:
+                click.echo("\n📝 Next steps:")
+                click.echo("  1. Run 'sync migrate-existing' to migrate existing Notion sync data")
+                click.echo("  2. Run with --phase 2 --dry-run to simulate incremental processing")
+                click.echo("  3. Execute phases without --dry-run when ready")
+        
+        # Run the migration analysis
+        asyncio.run(run_migration())
+        
+    except ImportError as e:
+        click.echo(f"❌ Import error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Migration analysis failed: {e}", err=True)
+        sys.exit(1)
+
+
+@sync.command('migrate-existing')
+@click.option('--database', help='Database path (overrides config)')
+@click.option('--dry-run', is_flag=True, help='Simulate migration without making changes')
+@click.pass_context
+def sync_migrate_existing(ctx, database: Optional[str], dry_run: bool):
+    """Migrate existing Notion sync data to the new sync tracking system."""
+    
+    config_obj = ctx.obj['config']
+    db_path = database or config_obj.get('database.path')
+    
+    try:
+        import asyncio
+        from src.core.database import DatabaseManager
+        from src.core.sync_migration import SyncMigrationAnalyzer
+        
+        async def run_existing_migration():
+            db_manager = DatabaseManager(db_path)
+            analyzer = SyncMigrationAnalyzer(db_manager)
+            
+            click.echo("🔄 Migrating existing Notion sync data to new tracking system...")
+            
+            if dry_run:
+                click.echo("🧪 DRY RUN - No changes will be made")
+            
+            # Execute the migration
+            result = await analyzer.migrate_existing_notion_sync_data(dry_run=dry_run)
+            
+            if result.get('error'):
+                click.echo(f"❌ Migration failed: {result['error']}")
+                return
+            
+            # Display results
+            stats = result.get('migration_stats', {})
+            click.echo("\n📊 Migration Results:")
+            click.echo("=" * 40)
+            
+            for item_type, type_stats in stats.items():
+                if isinstance(type_stats, dict):
+                    emoji = {"notebooks": "📔", "pages": "📄", "todos": "✅"}.get(item_type, "📋")
+                    click.echo(f"{emoji} {item_type.title()}:")
+                    click.echo(f"  Found: {type_stats['existing']}")
+                    click.echo(f"  Migrated: {type_stats['migrated']}")
+                    if type_stats['errors'] > 0:
+                        click.echo(f"  ❌ Errors: {type_stats['errors']}")
+            
+            total_migrated = result.get('total_migrated', 0)
+            total_errors = result.get('total_errors', 0)
+            
+            click.echo(f"\n📈 Summary:")
+            click.echo(f"  ✅ Total migrated: {total_migrated}")
+            if total_errors > 0:
+                click.echo(f"  ❌ Total errors: {total_errors}")
+            
+            if dry_run:
+                click.echo("\n💡 Run without --dry-run to execute the migration")
+            else:
+                click.echo("\n🎉 Migration completed successfully!")
+                click.echo("\n📝 Next steps:")
+                click.echo("  1. Check sync status: sync status")
+                click.echo("  2. Test with new changes: sync run --duration 60")
+        
+        # Run the migration
+        asyncio.run(run_existing_migration())
+        
+    except ImportError as e:
+        click.echo(f"❌ Import error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Migration failed: {e}", err=True)
+        sys.exit(1)
+
+
+@sync.command('run')
+@click.option('--database', help='Database path (overrides config)')
+@click.option('--duration', default=60, type=int, help='Run duration in seconds (0 for indefinite)')
+@click.option('--dry-run', is_flag=True, help='Show what would be synced without actually syncing')
+@click.pass_context
+def sync_run(ctx, database: Optional[str], duration: int, dry_run: bool):
+    """Run the sync engine to process pending changes."""
+    
+    config_obj = ctx.obj['config']
+    db_path = database or config_obj.get('database.path')
+    
+    try:
+        import asyncio
+        from src.core.database import DatabaseManager
+        from src.core.sync_queue import SyncQueueProcessor
+        from src.core.sync_targets import create_sync_target
+        
+        async def run_sync_engine():
+            db_manager = DatabaseManager(db_path)
+            processor = SyncQueueProcessor(db_manager)
+            
+            # Add configured targets
+            notion_enabled = config_obj.get('integrations.notion.enabled', False)
+            notion_token = config_obj.get('integrations.notion.api_token')
+            notion_db_id = config_obj.get('integrations.notion.database_id')
+            
+            if notion_enabled and notion_token and notion_db_id:
+                try:
+                    # Create Notion client for sync target
+                    from src.integrations.notion_sync import NotionNotebookSync
+                    
+                    # Create a simple notion client object with the required attributes
+                    class NotionClient:
+                        def __init__(self, token, database_id):
+                            self._token = token
+                            self.database_id = database_id
+                    
+                    notion_client = NotionClient(notion_token, notion_db_id)
+                    notion_target = create_sync_target('notion', 
+                                                     notion_client=notion_client, 
+                                                     verify_ssl=False)
+                    processor.add_target(notion_target)
+                    click.echo("✅ Notion sync target configured")
+                except Exception as e:
+                    click.echo(f"⚠️  Failed to setup Notion target: {e}")
+            
+            # Add mock target for testing if no real targets
+            if not processor.targets:
+                mock_target = create_sync_target('mock')
+                processor.add_target(mock_target)
+                click.echo("🧪 Using mock target for testing")
+            
+            click.echo(f"🚀 Starting sync engine...")
+            click.echo(f"⏱️  Duration: {'indefinite' if duration == 0 else f'{duration} seconds'}")
+            click.echo(f"🧪 Dry run: {'Yes' if dry_run else 'No'}")
+            
+            if dry_run:
+                # Just show what would be processed
+                status = await processor.get_sync_status()
+                click.echo(f"\n📊 Would process {status.get('pending_changes', 0)} pending changes")
+                return
+            
+            # Run for specified duration
+            if duration > 0:
+                async def run_with_timeout():
+                    try:
+                        await asyncio.wait_for(processor.start(), timeout=duration)
+                    except asyncio.TimeoutError:
+                        await processor.stop()
+                        click.echo(f"\n⏰ Sync engine stopped after {duration} seconds")
+                
+                await run_with_timeout()
+            else:
+                # Run indefinitely
+                try:
+                    await processor.start()
+                except KeyboardInterrupt:
+                    await processor.stop()
+                    click.echo("\n🛑 Sync engine stopped by user")
+        
+        # Run the sync engine
+        asyncio.run(run_sync_engine())
+        
+    except ImportError as e:
+        click.echo(f"❌ Import error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Sync engine failed: {e}", err=True)
         sys.exit(1)
 
 

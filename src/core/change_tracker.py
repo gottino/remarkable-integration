@@ -62,6 +62,19 @@ class ChangeTracker:
             if changed_fields:
                 changed_fields_json = json.dumps(changed_fields)
             
+            # 🔒 DEDUPLICATION: Check if identical change already exists (within last 5 minutes)
+            cursor.execute('''
+                SELECT id FROM sync_changelog 
+                WHERE source_table = ? AND source_id = ? AND operation = ? 
+                AND content_hash_after = ? AND process_status = 'pending'
+                AND changed_at >= datetime('now', '-5 minutes')
+            ''', (source_table, source_id, operation, hash_after))
+            
+            existing_record = cursor.fetchone()
+            if existing_record:
+                logger.debug(f"🔄 Skipping duplicate {operation} for {source_table}:{source_id} (existing #{existing_record[0]})")
+                return existing_record[0]
+            
             cursor.execute('''
                 INSERT INTO sync_changelog (
                     source_table, source_id, operation, 
