@@ -67,6 +67,7 @@ class TodoItem:
     notebook_name: str
     notebook_uuid: str
     page_number: int
+    page_uuid: str  # UUID of the page this todo was extracted from
     date_extracted: Optional[str] = None  # Date from page annotation
     confidence: float = 0.0
     
@@ -204,6 +205,7 @@ class NotebookTextResult:
                                 notebook_name=self.notebook_name,
                                 notebook_uuid=self.notebook_uuid,
                                 page_number=page.page_number,
+                                page_uuid=page.page_uuid,  # Add page UUID for linking
                                 date_extracted=page_date,
                                 confidence=1.0  # High confidence since Claude Vision processed it well
                             )
@@ -1361,6 +1363,7 @@ class NotebookTextExtractor:
                         text=todo.text,
                         notebook_uuid=todo.notebook_uuid,
                         page_number=todo.page_number,
+                        page_uuid=todo.page_uuid,  # Add page UUID for linking
                         confidence=todo.confidence,
                         date_extracted=actual_date_iso
                     )
@@ -1408,7 +1411,7 @@ class NotebookTextExtractor:
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
                         ''', (
                             candidate.notebook_uuid,
-                            None,  # page_uuid
+                            candidate.page_uuid,  # Use actual page UUID for linking
                             next((t.notebook_name for t in page_todos if t.text == candidate.text), ''),  # source_file
                             candidate.text[:100],  # title
                             candidate.text,

@@ -27,6 +27,7 @@ class TodoCandidate:
     text: str
     notebook_uuid: str
     page_number: int
+    page_uuid: str  # UUID of the page this todo was extracted from
     confidence: float
     bounding_box: Optional[Dict] = None  # {x, y, width, height}
     existing_id: Optional[int] = None    # If this matches an existing todo
@@ -290,7 +291,8 @@ class IntelligentTodoDeduplicator:
 
 def create_todo_candidate(text: str, 
                          notebook_uuid: str, 
-                         page_number: int, 
+                         page_number: int,
+                         page_uuid: str,
                          confidence: float,
                          bounding_box: Optional[Dict] = None,
                          date_extracted: Optional[str] = None) -> TodoCandidate:
@@ -299,6 +301,7 @@ def create_todo_candidate(text: str,
         text=text,
         notebook_uuid=notebook_uuid,
         page_number=page_number,
+        page_uuid=page_uuid,
         confidence=confidence,
         bounding_box=bounding_box,
         date_extracted=date_extracted
