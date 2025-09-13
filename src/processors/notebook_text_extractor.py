@@ -1321,6 +1321,9 @@ class NotebookTextExtractor:
             total_updated = 0
             total_skipped = 0
             
+            # Track operations for later (outside the main transaction)
+            tracking_operations = []
+            
             # Process each page
             for (notebook_uuid, page_number), page_todos in todos_by_page.items():
                 logger.debug(f"Processing {len(page_todos)} todos for page {page_number}")
@@ -1390,19 +1393,16 @@ class NotebookTextExtractor:
                         ))
                         total_updated += 1
                         
-                        # Track update
-                        try:
-                            todo_data = {
-                                'text': candidate.text,
-                                'completed': False,  # Default for new extraction
-                                'confidence': candidate.confidence,
-                                'actual_date': candidate.date_extracted,
-                                'notebook_uuid': candidate.notebook_uuid,
-                                'page_number': candidate.page_number
-                            }
-                            track_todo_operation('UPDATE', candidate.existing_id, data=todo_data, trigger_source='text_extractor')
-                        except Exception as e:
-                            logger.warning(f"Failed to track todo update for {candidate.existing_id}: {e}")
+                        # Defer tracking update until after transaction
+                        todo_data = {
+                            'text': candidate.text,
+                            'completed': False,  # Default for new extraction
+                            'confidence': candidate.confidence,
+                            'actual_date': candidate.date_extracted,
+                            'notebook_uuid': candidate.notebook_uuid,
+                            'page_number': candidate.page_number
+                        }
+                        tracking_operations.append(('UPDATE', candidate.existing_id, todo_data))
                     else:
                         # Insert new todo
                         cursor.execute('''
@@ -1423,19 +1423,16 @@ class NotebookTextExtractor:
                         todo_id = cursor.lastrowid
                         total_new += 1
                         
-                        # Track insertion
-                        try:
-                            todo_data = {
-                                'text': candidate.text,
-                                'completed': False,
-                                'confidence': candidate.confidence,
-                                'actual_date': candidate.date_extracted,
-                                'notebook_uuid': candidate.notebook_uuid,
-                                'page_number': candidate.page_number
-                            }
-                            track_todo_operation('INSERT', todo_id, data=todo_data, trigger_source='text_extractor')
-                        except Exception as e:
-                            logger.warning(f"Failed to track todo insertion for {todo_id}: {e}")
+                        # Defer tracking insert until after transaction
+                        todo_data = {
+                            'text': candidate.text,
+                            'completed': False,
+                            'confidence': candidate.confidence,
+                            'actual_date': candidate.date_extracted,
+                            'notebook_uuid': candidate.notebook_uuid,
+                            'page_number': candidate.page_number
+                        }
+                        tracking_operations.append(('INSERT', todo_id, todo_data))
                 
                 # Calculate skipped todos
                 total_skipped += len(page_todos) - len(final_todos)
@@ -1449,6 +1446,14 @@ class NotebookTextExtractor:
         finally:
             if self.db_manager:  # Close the connection if we created it
                 db_conn.close()
+        
+        # Execute deferred tracking operations AFTER database connection is closed
+        if 'tracking_operations' in locals():
+            for operation_type, todo_id, todo_data in tracking_operations:
+                try:
+                    track_todo_operation(operation_type, todo_id, data=todo_data, trigger_source='text_extractor')
+                except Exception as e:
+                    logger.warning(f"Failed to track todo {operation_type.lower()} for {todo_id}: {e}")
     
     def _load_notebook_list(self, notebook_list_file: str) -> set:
         """Load notebook UUIDs/names from file for selective processing."""

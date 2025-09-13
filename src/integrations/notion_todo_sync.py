@@ -227,6 +227,7 @@ class NotionTodoSync:
                 'confidence': confidence,
                 'completed': completed,
                 'source_link': source_link,
+                'notion_page_id': notion_page_id,
                 'notion_block_id': notion_block_id,
                 'created_at': created_at
             })
@@ -251,7 +252,7 @@ class NotionTodoSync:
                 todo_data = (
                     todo['id'], todo['text'], todo['actual_date'], todo['page_number'],
                     todo['confidence'], todo['completed'], notebook_name,
-                    None, todo['notion_block_id'], todo['created_at']
+                    todo['notion_page_id'], todo['notion_block_id'], todo['created_at']
                 )
                 
                 notion_page_id = self.export_todo_to_notion(todo_data, notebook_name)

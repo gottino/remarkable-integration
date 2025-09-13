@@ -192,9 +192,16 @@ class NotionSyncTracker:
                 # Check each page to determine if it's new or changed
                 for page_number, current_text, last_synced_content in page_sync_info:
                     if last_synced_content is None:
-                        # Never synced - this is a new page
-                        new_pages.append(page_number)
-                        content_changed = True
+                        # No sync record - could be missing sync tracking or genuinely new
+                        # Only treat as "new" if the page number exceeds last known total pages
+                        if page_number > last_total_pages:
+                            new_pages.append(page_number)
+                            content_changed = True
+                        else:
+                            # Page exists in range of previously synced pages - treat as changed
+                            # This handles missing sync records more gracefully
+                            changed_pages.append(page_number)
+                            content_changed = True
                     else:
                         # Compare current text vs last synced content
                         if current_text != last_synced_content:

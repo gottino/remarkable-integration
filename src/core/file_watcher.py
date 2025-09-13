@@ -405,8 +405,8 @@ class ReMarkableWatcher:
         """Unified handler for file changes - combines sync completion and processing."""
         logger.debug(f"🔄 File change detected: {event.src_path}")
         
-        # Process the file immediately (unified single-watcher approach)
-        await self.on_file_ready_for_processing(event)
+        # Trigger metadata-driven processing (replaces sync completion logic)
+        await self.on_sync_completed(event)
     
     def set_text_extractor(self, text_extractor):
         """Set the text extractor for processing."""
