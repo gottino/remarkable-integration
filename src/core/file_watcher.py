@@ -22,6 +22,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 
 from .events import get_event_bus, EventType, publish_file_event
+from .unified_sync import UnifiedSyncManager
 from ..utils.config import Config
 
 logger = logging.getLogger(__name__)
@@ -397,6 +398,9 @@ class ReMarkableWatcher:
         self.notion_sync_client = None
         self.todo_sync_client = None
         
+        # Unified sync system
+        self.unified_sync_manager = None
+        
         self.is_running = False
         
         logger.info("ReMarkableWatcher initialized")
@@ -405,12 +409,162 @@ class ReMarkableWatcher:
         """Unified handler for file changes - combines sync completion and processing."""
         logger.debug(f"🔄 File change detected: {event.src_path}")
         
-        # Trigger metadata-driven processing (replaces sync completion logic)
-        await self.on_sync_completed(event)
+        # Process the file immediately (unified single-watcher approach)
+        await self.on_file_ready_for_processing(event)
     
     def set_text_extractor(self, text_extractor):
         """Set the text extractor for processing."""
         self.text_extractor = text_extractor
+    
+    def setup_unified_sync(self, db_manager):
+        """Setup unified sync manager with configured integrations."""
+        from ..integrations.readwise_sync import ReadwiseSyncTarget
+        from ..integrations.notion_unified_sync import NotionSyncTarget
+        from ..utils.api_keys import get_readwise_api_key, get_notion_api_key
+        
+        self.unified_sync_manager = UnifiedSyncManager(db_manager)
+        
+        # Setup Readwise integration if enabled and configured
+        readwise_enabled = self.config.get('integrations.readwise.enabled', False)
+        if readwise_enabled:
+            readwise_api_key = get_readwise_api_key()
+            if readwise_api_key:
+                try:
+                    readwise_target = ReadwiseSyncTarget(
+                        access_token=readwise_api_key,
+                        db_connection=db_manager.get_connection(),
+                        author_name="reMarkable",
+                        default_category="books"
+                    )
+                    self.unified_sync_manager.register_target(readwise_target)
+                    logger.info("✅ Readwise sync target registered")
+                except Exception as e:
+                    logger.error(f"❌ Failed to setup Readwise sync: {e}")
+            else:
+                logger.warning("⚠️  Readwise enabled but no API key found")
+        
+        # Setup Notion integration with unified sync system
+        notion_enabled = self.config.get('integrations.notion.enabled', False)
+        if notion_enabled:
+            notion_api_key = get_notion_api_key()
+            notion_database_id = self.config.get('integrations.notion.database_id')
+            if notion_api_key and notion_database_id:
+                try:
+                    verify_ssl = self.config.get('integrations.notion.verify_ssl', False)
+                    notion_target = NotionSyncTarget(
+                        notion_token=notion_api_key,
+                        database_id=notion_database_id,
+                        db_connection=db_manager.get_connection(),
+                        verify_ssl=verify_ssl
+                    )
+                    self.unified_sync_manager.register_target(notion_target)
+                    logger.info("✅ Notion sync target registered")
+                except Exception as e:
+                    logger.error(f"❌ Failed to setup Notion sync: {e}")
+            else:
+                logger.warning("⚠️  Notion enabled but missing API key or database ID")
+        
+        logger.info(f"🔧 Unified sync manager setup complete. Registered targets: {list(self.unified_sync_manager.targets.keys())}")
+    
+    async def _sync_notebook_unified(self, notebook_uuid: str, notebook_name: str) -> bool:
+        """Sync notebook using the unified sync system."""
+        if not self.unified_sync_manager:
+            logger.warning("Unified sync manager not available for notebook sync")
+            return False
+        
+        logger.debug(f"Unified sync manager targets: {list(self.unified_sync_manager.targets.keys())}")
+        if "notion" not in self.unified_sync_manager.targets:
+            logger.warning("Notion target not registered in unified sync manager")
+            return False
+        
+        try:
+            # Get database connection
+            from ..core.database import DatabaseManager
+            db_path = self.config.get('database.path')
+            db_manager = DatabaseManager(db_path)
+            
+            with db_manager.get_connection_context() as conn:
+                # Fetch notebook data from database
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT 
+                        nte.notebook_uuid, nte.notebook_name, nte.page_number, 
+                        nte.text, nte.confidence, nte.page_uuid,
+                        nm.full_path, nm.last_modified, nm.last_opened
+                    FROM notebook_text_extractions nte
+                    LEFT JOIN notebook_metadata nm ON nte.notebook_uuid = nm.notebook_uuid
+                    WHERE nte.notebook_uuid = ? 
+                        AND nte.text IS NOT NULL AND length(nte.text) > 0
+                    ORDER BY nte.page_number
+                ''', (notebook_uuid,))
+                
+                rows = cursor.fetchall()
+                if not rows:
+                    logger.info(f"No text content found for notebook: {notebook_name}")
+                    return False
+                
+                logger.debug(f"Found {len(rows)} text rows for notebook {notebook_name}")
+                
+                # Build notebook data structure
+                pages = []
+                metadata = {}
+                
+                for row in rows:
+                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened = row
+                    
+                    # Add page data
+                    pages.append({
+                        'page_number': page_num,
+                        'text': text,
+                        'confidence': confidence or 0.0,
+                        'page_uuid': page_uuid
+                    })
+                    
+                    # Capture metadata from first row
+                    if not metadata:
+                        metadata = {
+                            'full_path': full_path,
+                            'last_modified': last_modified,
+                            'last_opened': last_opened
+                        }
+                
+                # Create SyncItem for notebook
+                from ..core.sync_engine import SyncItem, SyncItemType
+                
+                notebook_data = {
+                    'title': notebook_name,
+                    'notebook_name': notebook_name,
+                    'notebook_uuid': notebook_uuid,
+                    'pages': pages,
+                    **metadata
+                }
+                
+                sync_item = SyncItem(
+                    item_type=SyncItemType.NOTEBOOK,
+                    item_id=notebook_uuid,
+                    content_hash="",  # Will be calculated by target
+                    data=notebook_data,
+                    source_table="notebook_text_extractions",
+                    created_at=datetime.now(),
+                    updated_at=datetime.now()
+                )
+                
+                # Sync to Notion via unified system
+                result = await self.unified_sync_manager.sync_item_to_target(sync_item, "notion")
+                success = result.success
+                
+                if success:
+                    logger.info(f"✅ Successfully synced notebook via unified sync: {notebook_name}")
+                    return True
+                else:
+                    error_msg = result.error_message if hasattr(result, 'error_message') and result.error_message else "Unknown error"
+                    logger.error(f"❌ Failed to sync notebook via unified sync: {notebook_name} - {error_msg}")
+                    logger.error(f"   Sync result status: {result.status if hasattr(result, 'status') else 'Unknown'}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error syncing notebook {notebook_name} via unified sync: {e}")
+            return False
     
     def set_notion_sync_client(self, notion_sync_client):
         """Set the Notion sync client for automatic updates."""
@@ -488,7 +642,9 @@ class ReMarkableWatcher:
                 update_changed_metadata_only(source_dir, conn, changed_uuids, "./data")
                 
                 # Update Notion metadata for changed notebooks
-                if self.notion_sync_client:
+                # Note: With unified sync, metadata updates happen automatically during sync
+                if not self.unified_sync_manager and self.notion_sync_client:
+                    # Legacy metadata refresh only if unified sync not available
                     self.notion_sync_client.refresh_notion_metadata_for_specific_notebooks(conn, changed_uuids)
                 
                 # Process only the changed notebooks
@@ -514,10 +670,16 @@ class ReMarkableWatcher:
                             logger.info(f"✅ Successfully processed: {result.notebook_name}")
                             processed_count += 1
                             
-                            # Trigger Notion sync if configured
-                            if self.notion_sync_client:
-                                changed_pages = result.processed_page_numbers if hasattr(result, 'processed_page_numbers') else None
-                                await self._sync_notebook_to_notion_async(notebook_uuid, result.notebook_name, changed_pages)
+                            # Trigger unified sync for all configured integrations (Notion, Readwise, etc.)
+                            if self.unified_sync_manager:
+                                # Use unified sync for both Notion and other integrations
+                                await self._sync_notebook_unified(notebook_uuid, result.notebook_name)
+                                await self._sync_to_unified_targets_async(notebook_uuid, result)
+                            else:
+                                # Fallback to legacy Notion sync if unified sync not available
+                                if self.notion_sync_client:
+                                    changed_pages = result.processed_page_numbers if hasattr(result, 'processed_page_numbers') else None
+                                    await self._sync_notebook_to_notion_async(notebook_uuid, result.notebook_name, changed_pages)
                         else:
                             logger.warning(f"⚠️ Failed to process {notebook_uuid}: {result.error_message}")
                             
@@ -531,19 +693,45 @@ class ReMarkableWatcher:
     
     async def on_file_ready_for_processing(self, event: FileSystemEvent):
         """Called when a file in source directory is ready for processing."""
-        # Skip individual file processing - we now use metadata-driven batch processing
-        # after sync completion for better efficiency and accuracy
-        logger.debug(f"File ready: {event.src_path} (will be processed in metadata-driven batch)")
+        file_path = event.src_path
+        
+        # Extract notebook UUID from file path
+        try:
+            path_obj = Path(file_path)
+            if path_obj.suffix in {'.rm', '.content', '.metadata'}:
+                notebook_uuid = path_obj.stem
+                logger.info(f"🔄 Processing notebook change: {notebook_uuid}")
+                
+                # Process the notebook immediately 
+                if self.text_extractor:
+                    await self._process_notebook_async(notebook_uuid)
+                else:
+                    logger.warning("No text extractor available for processing")
+            else:
+                logger.debug(f"Ignoring non-notebook file: {file_path}")
+        except Exception as e:
+            logger.error(f"Error processing file change {file_path}: {e}")
     
     async def _process_notebook_async(self, notebook_uuid: str):
         """Process notebook asynchronously (wrapper for sync text extractor)."""
         # Run the synchronous text extraction in a thread pool
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None, 
             self._process_notebook_sync,
             notebook_uuid
         )
+        
+        # If processing was successful, trigger unified sync
+        if result and result.success and len(result.processed_page_numbers) > 0:
+            logger.info(f"🔄 Processing successful, triggering unified sync for {notebook_uuid}")
+            await self._sync_notebook_unified(notebook_uuid, result.notebook_name)
+        elif result and result.success:
+            logger.debug(f"📄 No pages processed for {notebook_uuid}, skipping sync")
+        elif result:
+            logger.warning(f"⚠️ Processing failed for {notebook_uuid}: {result.error_message}")
+        
+        return result
     
     def _process_notebook_sync(self, notebook_uuid: str):
         """Synchronous notebook processing."""
@@ -642,6 +830,61 @@ class ReMarkableWatcher:
         except Exception as e:
             logger.error(f"❌ Failed to sync notebook to Notion: {notebook_name} - {e}")
             # Don't fail the entire processing pipeline for Notion sync issues
+    
+    async def _sync_to_unified_targets_async(self, notebook_uuid: str, processing_result):
+        """Sync processed notebook data to unified targets (Readwise, etc.)."""
+        try:
+            from .sync_engine import SyncItem, SyncItemType
+            from datetime import datetime
+            import hashlib
+            
+            logger.info(f"🔄 Syncing notebook to unified targets: {processing_result.notebook_name}")
+            
+            # Sync enhanced highlights if any were extracted
+            if hasattr(processing_result, 'extracted_highlights'):
+                highlights = processing_result.extracted_highlights
+                for highlight in highlights:
+                    # Create sync item for each highlight
+                    highlight_data = {
+                        'text': highlight.get('original_text', ''),
+                        'corrected_text': highlight.get('corrected_text', ''),
+                        'title': processing_result.notebook_name,
+                        'page_number': highlight.get('page_number'),
+                        'confidence': highlight.get('confidence'),
+                        'notebook_uuid': notebook_uuid,
+                        'match_score': highlight.get('match_score')
+                    }
+                    
+                    # Create content hash for deduplication
+                    content_hash = hashlib.sha256(
+                        f"{notebook_uuid}:{highlight.get('corrected_text', highlight.get('original_text', ''))}:{highlight.get('page_number', '')}".encode()
+                    ).hexdigest()
+                    
+                    sync_item = SyncItem(
+                        item_type=SyncItemType.HIGHLIGHT,
+                        item_id=f"{notebook_uuid}_{highlight.get('page_number', 'unknown')}_{len(highlight_data['text'])}",
+                        content_hash=content_hash,
+                        data=highlight_data,
+                        source_table='enhanced_highlights',
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+                    
+                    # Sync to all targets
+                    results = await self.unified_sync_manager.sync_item_to_all_targets(sync_item)
+                    
+                    # Log results
+                    for target_name, result in results.items():
+                        if result.success:
+                            logger.info(f"✅ Highlight synced to {target_name}")
+                        else:
+                            logger.warning(f"⚠️  Failed to sync highlight to {target_name}: {result.error_message}")
+            
+            logger.info(f"🎉 Unified sync completed for notebook: {processing_result.notebook_name}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error syncing notebook {notebook_uuid} to unified targets: {e}")
+            # Don't fail the entire processing pipeline for unified sync issues
     
     async def _sync_maintenance_task(self):
         """Background task to handle delayed syncs."""

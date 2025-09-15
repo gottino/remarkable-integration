@@ -1118,6 +1118,7 @@ class NotebookTextExtractor:
                 
                 existing_hash = cursor.fetchone()
                 
+                
                 if existing_hash and existing_hash[0] == page_hash:
                     logger.debug(f"Page {page.page_number} unchanged, skipping")
                     continue
@@ -1260,15 +1261,23 @@ class NotebookTextExtractor:
                     todos=result.todos if hasattr(result, 'todos') else []
                 )
                 
+                # Storage and unified sync already handled by process_notebook() method:
+                # - process_notebook() only processes changed pages (incremental)
+                # - _store_notebook_results() stores the changed pages  
+                # - track_page_operation() triggers unified sync for each stored page
+                
                 if force_reprocess:
-                    logger.info(f"Force reprocessing - using regular storage")
+                    # For force reprocess, store again to override incremental logic
+                    logger.info(f"Force reprocessing - additional storage to override incremental logic")
                     self._store_notebook_results(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [], parent_dir)
-                    # For full reprocess, mark all pages as processed
-                    notebook_result.processed_page_numbers = {page.page_number for page in result.pages} if hasattr(result, 'pages') and result.pages else set()
+                
+                # Track which pages were processed (for return value)
+                if hasattr(result, 'pages') and result.pages:
+                    notebook_result.processed_page_numbers = {page.page_number for page in result.pages}
                 else:
-                    logger.info(f"Using incremental storage")
-                    processed_pages = self._store_notebook_results_incremental(notebook_uuid, notebook_name, result.pages if hasattr(result, 'pages') else [], parent_dir)
-                    notebook_result.processed_page_numbers = processed_pages
+                    notebook_result.processed_page_numbers = set()
+                    
+                logger.info(f"✅ Incremental processing complete: {len(notebook_result.processed_page_numbers)} pages processed")
                 
                 return notebook_result
             else:
