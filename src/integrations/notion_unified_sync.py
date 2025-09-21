@@ -550,22 +550,11 @@ class NotionSyncTarget(SyncTarget):
         """Calculate a hash for the item content to detect changes."""
         if item.item_id in self._content_hash_cache:
             return self._content_hash_cache[item.item_id]
-        
-        # Create a stable hash based on notebook content
+
+        # Use the same ContentFingerprint method as unified sync for consistency
         if item.item_type == SyncItemType.NOTEBOOK:
-            notebook_data = item.data
-            pages_data = notebook_data.get('pages', [])
-            
-            # Sort pages by page number for consistent hashing
-            sorted_pages = sorted(pages_data, key=lambda p: p.get('page_number', 0))
-            
-            content_parts = []
-            for page in sorted_pages:
-                page_content = f"page_{page.get('page_number', 0)}:{page.get('text', '')}:{page.get('confidence', 0)}"
-                content_parts.append(page_content)
-            
-            combined_content = '|'.join(content_parts)
-            content_hash = hashlib.md5(combined_content.encode('utf-8')).hexdigest()
+            from ..core.sync_engine import ContentFingerprint
+            content_hash = ContentFingerprint.for_notebook(item.data)
             
         elif item.item_type == SyncItemType.PAGE_TEXT:
             page_data = item.data
@@ -573,10 +562,8 @@ class NotionSyncTarget(SyncTarget):
             content_hash = hashlib.md5(page_content.encode('utf-8')).hexdigest()
 
         elif item.item_type == SyncItemType.TODO:
-            todo_data = item.data
-            # Create hash based on todo content, notebook, and completion status
-            todo_content = f"todo:{todo_data.get('text', '')}:notebook:{todo_data.get('notebook_uuid', '')}:page:{todo_data.get('page_number', 0)}:completed:{todo_data.get('completed', False)}"
-            content_hash = hashlib.md5(todo_content.encode('utf-8')).hexdigest()
+            from ..core.sync_engine import ContentFingerprint
+            content_hash = ContentFingerprint.for_todo(item.data)
 
         else:
             # Fallback for other types

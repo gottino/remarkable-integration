@@ -459,8 +459,6 @@ class UnifiedSyncManager:
                 # Find notebooks that need syncing (either never synced or content has changed)
                 cursor.execute('''
                     SELECT nm.notebook_uuid, nm.visible_name, nm.full_path,
-                           GROUP_CONCAT(nte.text, '\n\n') as full_text,
-                           COUNT(nte.id) as page_count,
                            MAX(nte.updated_at) as last_updated,
                            sr.content_hash as last_synced_hash
                     FROM notebook_metadata nm
@@ -479,16 +477,59 @@ class UnifiedSyncManager:
                 
                 notebooks = []
                 for row in cursor.fetchall():
-                    notebook_uuid, visible_name, full_path, full_text, page_count, last_updated, last_synced_hash = row
-                    
-                    # Generate content hash
-                    notebook_data = {
+                    notebook_uuid, visible_name, full_path, last_updated, last_synced_hash = row
+
+                    # Fetch individual pages for this notebook
+                    cursor.execute('''
+                        SELECT nte.page_number, nte.text, nte.confidence, nte.page_uuid,
+                               nte.updated_at
+                        FROM notebook_text_extractions nte
+                        WHERE nte.notebook_uuid = ?
+                            AND nte.text IS NOT NULL AND length(nte.text) > 0
+                        ORDER BY nte.page_number
+                    ''', (notebook_uuid,))
+
+                    pages_data = []
+                    for page_row in cursor.fetchall():
+                        page_number, text, confidence, page_uuid, page_updated = page_row
+                        pages_data.append({
+                            'page_number': page_number,
+                            'text': text,
+                            'confidence': confidence or 0.0,
+                            'page_uuid': page_uuid,
+                            'updated_at': page_updated
+                        })
+
+                    if not pages_data:
+                        continue  # Skip notebooks with no text content
+
+                    # Convert pages to text_content for ContentFingerprint compatibility
+                    text_content = '\n'.join([
+                        f"Page {page['page_number']}: {page['text']}"
+                        for page in pages_data
+                        if page.get('text', '').strip()
+                    ])
+
+                    # Create data structure compatible with ContentFingerprint.for_notebook()
+                    fingerprint_data = {
                         'title': visible_name or 'Untitled Notebook',
-                        'text_content': full_text or '',
-                        'page_count': page_count,
+                        'author': '',  # reMarkable doesn't have author concept
+                        'text_content': text_content,
+                        'page_count': len(pages_data),
                         'type': 'notebook'
                     }
-                    content_hash = ContentFingerprint.for_notebook(notebook_data)
+                    content_hash = ContentFingerprint.for_notebook(fingerprint_data)
+
+                    # Create the actual data structure for sync (includes both formats)
+                    notebook_data = {
+                        'notebook_uuid': notebook_uuid,
+                        'notebook_name': visible_name or 'Untitled Notebook',
+                        'title': visible_name or 'Untitled Notebook',  # For compatibility
+                        'pages': pages_data,
+                        'text_content': text_content,  # For hash consistency
+                        'page_count': len(pages_data),
+                        'type': 'notebook'
+                    }
 
                     # Only include if content has changed or never synced
                     if last_synced_hash is None or last_synced_hash != content_hash:
@@ -498,10 +539,11 @@ class UnifiedSyncManager:
                             'content_hash': content_hash,
                             'data': {
                                 **notebook_data,
-                                'notebook_uuid': notebook_uuid,
-                                'full_path': full_path
+                                'full_path': full_path,
+                                'created_at': last_updated,
+                                'updated_at': last_updated
                             },
-                            'source_table': 'notebook_metadata',
+                            'source_table': 'notebook_text_extractions',
                             'updated_at': last_updated or datetime.now().isoformat()
                         })
 

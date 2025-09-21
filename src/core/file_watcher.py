@@ -624,16 +624,28 @@ class ReMarkableWatcher:
                             'last_opened': last_opened
                         }
                 
-                # Create SyncItem for notebook
+                # Create SyncItem for notebook using same structure as unified sync
                 from ..core.sync_engine import SyncItem, SyncItemType, SyncStatus
-                
+
+                # Convert pages to text_content for ContentFingerprint compatibility (same as unified sync)
+                text_content = '\n'.join([
+                    f"Page {page['page_number']}: {page['text']}"
+                    for page in pages
+                    if page.get('text', '').strip()
+                ])
+
                 notebook_data = {
-                    'title': notebook_name,
-                    'notebook_name': notebook_name,
                     'notebook_uuid': notebook_uuid,
+                    'notebook_name': notebook_name,
+                    'title': notebook_name,  # For compatibility with Notion sync
                     'pages': pages,
-                    'changed_pages': changed_pages,  # Pass changed page numbers for incremental sync
-                    **metadata
+                    'text_content': text_content,  # For hash consistency
+                    'page_count': len(pages),
+                    'type': 'notebook',
+                    'changed_pages': changed_pages,  # Additional info for incremental sync
+                    'full_path': metadata.get('full_path'),
+                    'created_at': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat()
                 }
                 
                 sync_item = SyncItem(
@@ -801,16 +813,13 @@ class ReMarkableWatcher:
                             
                             # Trigger unified sync for all configured integrations (Notion, Readwise, etc.)
                             if self.unified_sync_manager:
-                                # Use unified sync for both Notion and other integrations
-                                logger.info(f"🔍 DEBUG: result.processed_page_numbers = {result.processed_page_numbers}")
-                                logger.info(f"🔍 DEBUG: About to call _sync_notebook_unified with changed_pages = {result.processed_page_numbers}")
+                                # Use unified sync for notebook content
                                 await self._sync_notebook_unified(notebook_uuid, result.notebook_name, result.processed_page_numbers)
-                                await self._sync_to_unified_targets_async(notebook_uuid, result)
+
+                                # Sync any new todos from this notebook
+                                await self._sync_notebook_todos_async(notebook_uuid, result.notebook_name)
                             else:
-                                # Fallback to legacy Notion sync if unified sync not available
-                                if self.notion_sync_client:
-                                    changed_pages = result.processed_page_numbers if hasattr(result, 'processed_page_numbers') else None
-                                    await self._sync_notebook_to_notion_async(notebook_uuid, result.notebook_name, changed_pages)
+                                logger.warning(f"⚠️ Unified sync manager not available for {result.notebook_name}")
                         else:
                             logger.warning(f"⚠️ Failed to process {notebook_uuid}: {result.error_message}")
                             
@@ -948,6 +957,9 @@ class ReMarkableWatcher:
             logger.info(f"🔄 Processing successful, triggering unified sync for {notebook_uuid}")
             logger.info(f"🔍 DEBUG: Direct processing - result.processed_page_numbers = {result.processed_page_numbers}")
             await self._sync_notebook_unified(notebook_uuid, result.notebook_name, result.processed_page_numbers)
+
+            # Also sync any new todos from this notebook (direct processing path)
+            await self._sync_notebook_todos_async(notebook_uuid, result.notebook_name)
         elif result and result.success:
             logger.debug(f"📄 No pages processed for {notebook_uuid}, skipping sync")
         elif result:
@@ -960,185 +972,58 @@ class ReMarkableWatcher:
         if self.text_extractor:
             return self.text_extractor.process_notebook_incremental(notebook_uuid)
         return None
-    
-    async def _sync_notebook_to_notion_async(self, notebook_uuid: str, notebook_name: str, changed_pages: set = None):
-        """Sync a single notebook to Notion after processing."""
+
+    async def _sync_notebook_todos_async(self, notebook_uuid: str, notebook_name: str):
+        """Sync todos from a specific notebook that need syncing."""
         try:
-            logger.info(f"📄 Syncing notebook to Notion: {notebook_name}")
-            
-            # Get database connection from config
-            from ..core.database import DatabaseManager
-            from ..integrations.notion_incremental import NotionSyncTracker
-            db_path = self.config.get('database.path')
-            db_manager = DatabaseManager(db_path)
-            
-            with db_manager.get_connection_context() as conn:
-                # Use incremental change detection to determine what actually needs syncing
-                sync_tracker = NotionSyncTracker(db_manager)
-                changes = sync_tracker.get_notebook_changes(notebook_uuid)
-                
-                # Fetch the specific notebook (skip metadata refresh since we did it at startup)
-                notebooks = self.notion_sync_client.fetch_notebooks_from_db(conn, refresh_changed_metadata=False)
-                target_notebook = next((nb for nb in notebooks if nb.uuid == notebook_uuid), None)
-                
-                if target_notebook:
-                    existing_page_id = self.notion_sync_client.find_existing_page(notebook_uuid)
-                    
-                    if existing_page_id:
-                        # Check for content changes with better filtering
-                        if changes['new_pages'] or changes['changed_pages']:
-                            # Log what we're syncing
-                            total_to_sync = len(changes['new_pages']) + len(changes['changed_pages'])
-                            logger.info(f"📝 Syncing {total_to_sync} pages to Notion: {notebook_name} ({len(changes['new_pages'])} new, {len(changes['changed_pages'])} changed)")
-                            
-                            # Sync both new and changed pages incrementally  
-                            all_changed_pages = set(changes['new_pages'] + changes['changed_pages'])
-                            self.notion_sync_client.update_existing_page(existing_page_id, target_notebook, all_changed_pages)
-                            
-                            # Mark individual pages as synced
-                            for page_num in all_changed_pages:
-                                page = next((p for p in target_notebook.pages if p.page_number == page_num), None)
-                                if page:
-                                    page_content_hash = sync_tracker._calculate_page_content_hash((None, None, None, page.confidence, page.page_number, page.text))
-                                    sync_tracker.mark_page_synced(notebook_uuid, page_num, page.page_uuid, page_content_hash)
-                        elif changes['metadata_changed']:
-                            # Only metadata changed - update metadata
-                            logger.info(f"📄 Updating metadata only for: {notebook_name}")
-                            properties = {
-                                "Total Pages": {"number": target_notebook.total_pages},
-                                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-                            }
-                            self.notion_sync_client.client.pages.update(page_id=existing_page_id, properties=properties)
-                        else:
-                            logger.info(f"⏭️ No changes detected for: {notebook_name}")
-                            return
-                            
-                        # Mark as synced after successful content or metadata sync
-                        sync_tracker.mark_notebook_synced(
-                            notebook_uuid, existing_page_id,
-                            changes['current_content_hash'],
-                            changes['current_metadata_hash'], 
-                            changes['current_total_pages']
-                        )
-                        page_id = existing_page_id
-                    else:
-                        # New notebook - create page
-                        logger.info(f"📖 Creating new Notion page for: {notebook_name}")
-                        page_id = self.notion_sync_client.create_notebook_page(target_notebook)
-                        
-                        # Mark as synced for new notebooks
-                        sync_tracker.mark_notebook_synced(
-                            notebook_uuid, page_id,
-                            changes['current_content_hash'],
-                            changes['current_metadata_hash'], 
-                            changes['current_total_pages']
-                        )
-                    logger.info(f"✅ Synced notebook to Notion: {notebook_name} (page: {page_id})")
-                    
-                    # After successful notebook sync, sync any new todos
-                    if self.todo_sync_client:
-                        try:
-                            stats = self.todo_sync_client.sync_todos(days_back=30, dry_run=False)
-                            if stats['exported'] > 0:
-                                logger.info(f"📋 Exported {stats['exported']} new todos to Tasks database")
-                            elif stats['total'] > 0:
-                                logger.debug(f"📋 {stats['total']} todos found but {stats['errors']} failed to export")
-                        except Exception as e:
-                            logger.warning(f"⚠️ Todo sync failed: {e}")
-                    
-                else:
-                    logger.warning(f"⚠️ Notebook not found for Notion sync: {notebook_name}")
-                    
-        except Exception as e:
-            logger.error(f"❌ Failed to sync notebook to Notion: {notebook_name} - {e}")
-            # Don't fail the entire processing pipeline for Notion sync issues
-    
-    async def _sync_to_unified_targets_async(self, notebook_uuid: str, processing_result):
-        """Sync processed notebook data to unified targets (Readwise, etc.)."""
-        try:
+            logger.info(f"🔍 DEBUG: _sync_notebook_todos_async called for {notebook_name}")
+            logger.info(f"🔍 DEBUG: unified_sync_manager exists: {self.unified_sync_manager is not None}")
+            if self.unified_sync_manager:
+                logger.info(f"🔍 DEBUG: Available targets: {list(self.unified_sync_manager.targets.keys())}")
+                logger.info(f"🔍 DEBUG: notion in targets: {'notion' in self.unified_sync_manager.targets}")
+
+            if not self.unified_sync_manager or "notion" not in self.unified_sync_manager.targets:
+                logger.warning(f"⏭️ Unified sync or Notion target not available - skipping todo sync for {notebook_name}")
+                return
+
             from .sync_engine import SyncItem, SyncItemType
             from datetime import datetime
-            import hashlib
 
-            logger.info(f"🔄 Syncing notebook to unified targets: {processing_result.notebook_name}")
+            logger.info(f"🔄 Checking for new todos in notebook: {notebook_name}")
 
-            # Check for new todos that need syncing from this notebook
-            if self.unified_sync_manager and "notion" in self.unified_sync_manager.targets:
-                logger.info(f"🔄 Checking for new todos in notebook: {processing_result.notebook_name}")
-                todos_to_sync = await self.unified_sync_manager._get_todos_needing_sync("notion", limit=50)
+            # Get todos needing sync
+            todos_to_sync = await self.unified_sync_manager._get_todos_needing_sync("notion", limit=100)
 
-                # Filter for todos from this specific notebook
-                notebook_todos = [todo for todo in todos_to_sync
-                                if todo['data'].get('notebook_uuid') == notebook_uuid]
+            # Filter for todos from this specific notebook
+            notebook_todos = [todo for todo in todos_to_sync
+                            if todo['data'].get('notebook_uuid') == notebook_uuid]
 
-                if notebook_todos:
-                    logger.info(f"📝 Found {len(notebook_todos)} new todos to sync from {processing_result.notebook_name}")
-                    for todo_data in notebook_todos:
-                        sync_item = SyncItem(
-                            item_type=SyncItemType.TODO,
-                            item_id=todo_data['item_id'],
-                            content_hash=todo_data['content_hash'],
-                            data=todo_data['data'],
-                            source_table=todo_data['source_table'],
-                            created_at=datetime.fromisoformat(todo_data['data']['created_at']) if todo_data['data'].get('created_at') else datetime.now(),
-                            updated_at=datetime.fromisoformat(todo_data['updated_at']) if todo_data.get('updated_at') else datetime.now()
-                        )
-
-                        # Sync todo to Notion
-                        result = await self.unified_sync_manager.sync_item_to_target(sync_item, "notion")
-                        if result.status.value == 'success':
-                            logger.info(f"✅ Successfully synced todo {todo_data['item_id']}: {todo_data['data']['text'][:50]}...")
-                        else:
-                            logger.warning(f"⚠️  Failed to sync todo {todo_data['item_id']}: {result.error_message}")
-                else:
-                    logger.debug(f"📋 No new todos to sync from {processing_result.notebook_name}")
-
-            # Sync enhanced highlights if any were extracted
-            if hasattr(processing_result, 'extracted_highlights'):
-                highlights = processing_result.extracted_highlights
-                for highlight in highlights:
-                    # Create sync item for each highlight
-                    highlight_data = {
-                        'text': highlight.get('original_text', ''),
-                        'corrected_text': highlight.get('corrected_text', ''),
-                        'title': processing_result.notebook_name,
-                        'page_number': highlight.get('page_number'),
-                        'confidence': highlight.get('confidence'),
-                        'notebook_uuid': notebook_uuid,
-                        'match_score': highlight.get('match_score')
-                    }
-                    
-                    # Create content hash for deduplication
-                    content_hash = hashlib.sha256(
-                        f"{notebook_uuid}:{highlight.get('corrected_text', highlight.get('original_text', ''))}:{highlight.get('page_number', '')}".encode()
-                    ).hexdigest()
-                    
+            if notebook_todos:
+                logger.info(f"📝 Found {len(notebook_todos)} new todos to sync from {notebook_name}")
+                for todo_data in notebook_todos:
                     sync_item = SyncItem(
-                        item_type=SyncItemType.HIGHLIGHT,
-                        item_id=f"{notebook_uuid}_{highlight.get('page_number', 'unknown')}_{len(highlight_data['text'])}",
-                        content_hash=content_hash,
-                        data=highlight_data,
-                        source_table='enhanced_highlights',
-                        created_at=datetime.now(),
-                        updated_at=datetime.now()
+                        item_type=SyncItemType.TODO,
+                        item_id=todo_data['item_id'],
+                        content_hash=todo_data['content_hash'],
+                        data=todo_data['data'],
+                        source_table=todo_data['source_table'],
+                        created_at=datetime.fromisoformat(todo_data['data']['created_at']) if todo_data['data'].get('created_at') else datetime.now(),
+                        updated_at=datetime.fromisoformat(todo_data['updated_at']) if todo_data.get('updated_at') else datetime.now()
                     )
-                    
-                    # Sync to all targets
-                    results = await self.unified_sync_manager.sync_item_to_all_targets(sync_item)
-                    
-                    # Log results
-                    for target_name, result in results.items():
-                        if result.success:
-                            logger.info(f"✅ Highlight synced to {target_name}")
-                        else:
-                            logger.warning(f"⚠️  Failed to sync highlight to {target_name}: {result.error_message}")
-            
-            logger.info(f"🎉 Unified sync completed for notebook: {processing_result.notebook_name}")
-            
+
+                    # Sync todo to Notion
+                    result = await self.unified_sync_manager.sync_item_to_target(sync_item, "notion")
+                    if result.status.value == 'success':
+                        logger.info(f"✅ Successfully synced todo {todo_data['item_id']}: {todo_data['data']['text'][:50]}...")
+                    else:
+                        logger.warning(f"⚠️  Failed to sync todo {todo_data['item_id']}: {result.error_message}")
+            else:
+                logger.debug(f"📋 No new todos to sync from {notebook_name}")
+
         except Exception as e:
-            logger.error(f"❌ Error syncing notebook {notebook_uuid} to unified targets: {e}")
-            # Don't fail the entire processing pipeline for unified sync issues
-    
+            logger.error(f"❌ Error syncing todos for notebook {notebook_name}: {e}")
+            # Don't fail the entire processing pipeline for todo sync issues
+
     async def _sync_maintenance_task(self):
         """Background task to handle delayed syncs."""
         while self.is_running:
