@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.sync_engine import SyncTarget, SyncItem, SyncResult, SyncStatus, SyncItemType
+from ..core.database import DatabaseManager
 # Import the data classes we still need from legacy sync
 from .notion_sync import Notebook, NotebookPage, NotebookMetadata
 from dataclasses import dataclass
@@ -33,13 +34,13 @@ class NotionSyncTarget(SyncTarget):
     
     def __init__(self, notion_token: str, database_id: str,
                  tasks_database_id: Optional[str] = None,
-                 db_connection: Optional[sqlite3.Connection] = None,
+                 db_manager: Optional[DatabaseManager] = None,
                  verify_ssl: bool = True):
         super().__init__("notion")
         self.notion_token = notion_token
         self.database_id = database_id
         self.tasks_database_id = tasks_database_id
-        self.db_connection = db_connection
+        self.db_manager = db_manager
         self.verify_ssl = verify_ssl
         
         # For now, keep using legacy sync but we'll override the update method
@@ -192,7 +193,7 @@ class NotionSyncTarget(SyncTarget):
                 )
             
             # Get full notebook data for incremental update
-            if self.db_connection:
+            if self.db_manager:
                 notebook = self._fetch_notebook_from_db(notebook_uuid)
                 if notebook:
                     # Update just this page
@@ -325,18 +326,19 @@ class NotionSyncTarget(SyncTarget):
         We use the content hash to check for duplicates by querying
         our sync tracking tables.
         """
-        if not self.db_connection:
+        if not self.db_manager:
             return None
-        
+
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute('''
-                SELECT notion_page_id FROM notion_notebook_sync 
-                WHERE content_hash = ?
-            ''', (content_hash,))
-            
-            result = cursor.fetchone()
-            return result[0] if result else None
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT notion_page_id FROM notion_notebook_sync
+                    WHERE content_hash = ?
+                ''', (content_hash,))
+
+                result = cursor.fetchone()
+                return result[0] if result else None
             
         except Exception as e:
             self.logger.warning(f"Error checking duplicate in Notion: {e}")
@@ -430,15 +432,16 @@ class NotionSyncTarget(SyncTarget):
     
     def _fetch_notebook_from_db(self, notebook_uuid: str) -> Optional[Notebook]:
         """Fetch a notebook from the database."""
-        if not self.db_connection:
+        if not self.db_manager:
             return None
-        
+
         try:
             # Use the existing fetch method from NotionNotebookSync
-            notebooks = self.notion_client.fetch_notebooks_from_db(self.db_connection)
-            for notebook in notebooks:
-                if notebook.uuid == notebook_uuid:
-                    return notebook
+            with self.db_manager.get_connection() as conn:
+                notebooks = self.notion_client.fetch_notebooks_from_db(conn)
+                for notebook in notebooks:
+                    if notebook.uuid == notebook_uuid:
+                        return notebook
             return None
         except Exception as e:
             self.logger.error(f"Error fetching notebook {notebook_uuid} from DB: {e}")
@@ -474,53 +477,60 @@ class NotionSyncTarget(SyncTarget):
             self.logger.debug("No notebooks specified for Notion metadata refresh")
             return 0
 
-        if not self.db_connection:
-            self.logger.warning("No database connection - skipping metadata refresh")
+        if not self.db_manager:
+            self.logger.warning("No database manager - skipping metadata refresh")
             return 0
 
         refreshed_count = 0
         self.logger.info(f"🔄 Refreshing Notion metadata for {len(notebook_uuids)} changed notebooks...")
 
         try:
-            # Fetch notebooks that have changed metadata
-            notebooks = self.notion_client.fetch_notebooks_from_db(self.db_connection, refresh_changed_metadata=False)
-            changed_notebooks = [nb for nb in notebooks if nb.uuid in notebook_uuids]
+            # Fetch notebooks that have changed metadata using thread-safe connection
+            with self.db_manager.get_connection() as conn:
+                notebooks = self.notion_client.fetch_notebooks_from_db(conn, refresh_changed_metadata=False)
+                changed_notebooks = [nb for nb in notebooks if nb.uuid in notebook_uuids]
 
-            for notebook in changed_notebooks:
-                try:
-                    existing_page_id = self.notion_client.find_existing_page(notebook.uuid)
+                for notebook in changed_notebooks:
+                    try:
+                        existing_page_id = self.notion_client.find_existing_page(notebook.uuid)
 
-                    if existing_page_id:
-                        self.logger.debug(f"📝 Updating Notion metadata for: {notebook.name}")
+                        if existing_page_id:
+                            self.logger.debug(f"📝 Updating Notion metadata for: {notebook.name}")
 
-                        # Build metadata properties
-                        properties = {
-                            "Total Pages": {"number": notebook.total_pages},
-                            "Last Updated": {"date": {"start": datetime.now().isoformat()}}
-                        }
+                            # Build metadata properties
+                            properties = {
+                                "Total Pages": {"number": notebook.total_pages},
+                                "Last Updated": {"date": {"start": datetime.now().isoformat()}}
+                            }
 
-                        if notebook.metadata:
-                            # Add path tags
-                            if notebook.metadata.path_tags:
-                                properties["Tags"] = {
-                                    "multi_select": [{"name": tag} for tag in notebook.metadata.path_tags]
-                                }
+                            if notebook.metadata:
+                                # Add path tags
+                                if notebook.metadata.path_tags:
+                                    properties["Tags"] = {
+                                        "multi_select": [{"name": tag} for tag in notebook.metadata.path_tags]
+                                    }
 
-                            # Add last modified if available
-                            if notebook.metadata.last_modified:
-                                properties["Last Modified"] = {
-                                    "date": {"start": notebook.metadata.last_modified.isoformat()}
-                                }
+                                # Add last modified if available
+                                if notebook.metadata.last_modified:
+                                    properties["Last Modified"] = {
+                                        "date": {"start": notebook.metadata.last_modified.isoformat()}
+                                    }
 
-                        # Update the Notion page properties
-                        self.notion_client.client.pages.update(page_id=existing_page_id, properties=properties)
-                        refreshed_count += 1
-                        self.logger.debug(f"✅ Updated metadata for {notebook.name}")
-                    else:
-                        self.logger.debug(f"⏭️ No existing Notion page found for {notebook.name} - skipping metadata refresh")
+                                # Add last viewed (last_opened) if available
+                                if notebook.metadata.last_opened:
+                                    properties["Last Viewed"] = {
+                                        "date": {"start": notebook.metadata.last_opened.isoformat()}
+                                    }
 
-                except Exception as e:
-                    self.logger.error(f"❌ Failed to refresh metadata for {notebook.name}: {e}")
+                            # Update the Notion page properties
+                            self.notion_client.client.pages.update(page_id=existing_page_id, properties=properties)
+                            refreshed_count += 1
+                            self.logger.debug(f"✅ Updated metadata for {notebook.name}")
+                        else:
+                            self.logger.debug(f"⏭️ No existing Notion page found for {notebook.name} - skipping metadata refresh")
+
+                    except Exception as e:
+                        self.logger.error(f"❌ Failed to refresh metadata for {notebook.name}: {e}")
 
         except Exception as e:
             self.logger.error(f"❌ Error during metadata refresh: {e}")
