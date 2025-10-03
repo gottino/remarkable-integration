@@ -55,52 +55,73 @@ class APIKeyManager:
         
         logger.debug(f"API Key Manager initialized with config dir: {self.config_dir}")
     
-    def get_anthropic_api_key(self) -> Optional[str]:
+    def get_api_key(self, service: str, env_var: str = None, interactive_setup: bool = True) -> Optional[str]:
         """
-        Get Anthropic API key from various sources in order of preference:
-        1. Environment variable ANTHROPIC_API_KEY
+        Get API key for any service from various sources in order of preference:
+        1. Environment variable
         2. Keychain/Credential store
         3. Encrypted configuration file
-        4. Interactive prompt (if terminal available)
+        4. Interactive prompt (if terminal available and enabled)
+        
+        Args:
+            service: Service name (e.g., 'anthropic', 'readwise', 'notion')
+            env_var: Environment variable name (auto-detected if None)
+            interactive_setup: Whether to prompt interactively if not found
         
         Returns:
             API key string or None if not found/configured
         """
+        if env_var is None:
+            env_var = f"{service.upper()}_API_KEY"
+        
         # 1. Check environment variable first
-        api_key = os.getenv('ANTHROPIC_API_KEY')
+        api_key = os.getenv(env_var)
         if api_key:
-            logger.debug("API key found in environment variable")
+            logger.debug(f"{service} API key found in environment variable {env_var}")
             return api_key
         
         # 2. Check system keychain/credential store
-        api_key = self._get_from_keychain('anthropic')
+        api_key = self._get_from_keychain(service)
         if api_key:
-            logger.debug("API key found in system keychain")
+            logger.debug(f"{service} API key found in system keychain")
             return api_key
         
         # 3. Check encrypted configuration file
-        api_key = self._get_from_encrypted_config('anthropic')
+        api_key = self._get_from_encrypted_config(service)
         if api_key:
-            logger.debug("API key found in encrypted configuration")
+            logger.debug(f"{service} API key found in encrypted configuration")
             return api_key
         
-        # 4. Interactive prompt if terminal available
-        if sys.stdin.isatty():
-            logger.info("No API key found. Starting interactive setup...")
-            api_key = self._prompt_for_api_key('anthropic')
+        # 4. Interactive prompt if terminal available and enabled
+        if interactive_setup and sys.stdin.isatty():
+            logger.info(f"No {service} API key found. Starting interactive setup...")
+            api_key = self._prompt_for_api_key(service)
             if api_key:
                 # Store for future use
-                self.store_anthropic_api_key(api_key)
+                self.store_api_key(service, api_key)
                 return api_key
         
-        logger.warning("No Anthropic API key found. Use 'config api-key set' command to configure.")
+        logger.warning(f"No {service} API key found. Use API key management to configure.")
         return None
     
-    def store_anthropic_api_key(self, api_key: str, method: str = 'auto') -> bool:
+    def get_anthropic_api_key(self) -> Optional[str]:
+        """Get Anthropic API key (backward compatibility)."""
+        return self.get_api_key('anthropic', 'ANTHROPIC_API_KEY')
+    
+    def get_readwise_api_key(self) -> Optional[str]:
+        """Get Readwise API key."""
+        return self.get_api_key('readwise', 'READWISE_API_TOKEN', interactive_setup=True)
+    
+    def get_notion_api_key(self) -> Optional[str]:
+        """Get Notion API key."""
+        return self.get_api_key('notion', 'NOTION_API_TOKEN', interactive_setup=True)
+    
+    def store_api_key(self, service: str, api_key: str, method: str = 'auto') -> bool:
         """
-        Store Anthropic API key securely.
+        Store API key securely for any service.
         
         Args:
+            service: Service name (e.g., 'anthropic', 'readwise', 'notion')
             api_key: The API key to store
             method: Storage method ('keychain', 'encrypted', 'auto')
             
@@ -109,25 +130,37 @@ class APIKeyManager:
         """
         if method == 'auto':
             # Try keychain first, fallback to encrypted file
-            if self._store_in_keychain('anthropic', api_key):
-                logger.info("API key stored in system keychain")
+            if self._store_in_keychain(service, api_key):
+                logger.info(f"{service} API key stored in system keychain")
                 return True
-            elif self._store_in_encrypted_config('anthropic', api_key):
-                logger.info("API key stored in encrypted configuration file")
+            elif self._store_in_encrypted_config(service, api_key):
+                logger.info(f"{service} API key stored in encrypted configuration file")
                 return True
             else:
-                logger.error("Failed to store API key securely")
+                logger.error(f"Failed to store {service} API key securely")
                 return False
         
         elif method == 'keychain':
-            return self._store_in_keychain('anthropic', api_key)
+            return self._store_in_keychain(service, api_key)
         
         elif method == 'encrypted':
-            return self._store_in_encrypted_config('anthropic', api_key)
+            return self._store_in_encrypted_config(service, api_key)
         
         else:
             logger.error(f"Unknown storage method: {method}")
             return False
+    
+    def store_anthropic_api_key(self, api_key: str, method: str = 'auto') -> bool:
+        """Store Anthropic API key securely (backward compatibility)."""
+        return self.store_api_key('anthropic', api_key, method)
+    
+    def store_readwise_api_key(self, api_key: str, method: str = 'auto') -> bool:
+        """Store Readwise API key securely."""
+        return self.store_api_key('readwise', api_key, method)
+    
+    def store_notion_api_key(self, api_key: str, method: str = 'auto') -> bool:
+        """Store Notion API key securely.""" 
+        return self.store_api_key('notion', api_key, method)
     
     def remove_anthropic_api_key(self) -> bool:
         """Remove stored Anthropic API key from all locations."""
@@ -149,17 +182,27 @@ class APIKeyManager:
         """List all stored API keys and their storage locations."""
         keys = {}
         
-        # Check environment
-        if os.getenv('ANTHROPIC_API_KEY'):
-            keys['anthropic'] = 'environment'
+        # Services to check
+        services = {
+            'anthropic': ['ANTHROPIC_API_KEY'],
+            'readwise': ['READWISE_API_TOKEN', 'READWISE_API_KEY'],
+            'notion': ['NOTION_API_TOKEN', 'NOTION_API_KEY']
+        }
         
-        # Check keychain
-        if self._get_from_keychain('anthropic'):
-            keys['anthropic'] = 'keychain'
-        
-        # Check encrypted config
-        elif self._get_from_encrypted_config('anthropic'):
-            keys['anthropic'] = 'encrypted_file'
+        for service, env_vars in services.items():
+            # Check environment variables
+            for env_var in env_vars:
+                if os.getenv(env_var):
+                    keys[service] = 'environment'
+                    break
+            
+            # If not found in env, check keychain
+            if service not in keys and self._get_from_keychain(service):
+                keys[service] = 'keychain'
+            
+            # If not found in keychain, check encrypted config
+            elif service not in keys and self._get_from_encrypted_config(service):
+                keys[service] = 'encrypted_file'
         
         return keys
     
@@ -335,8 +378,20 @@ class APIKeyManager:
         try:
             print(f"\n🔑 {service.title()} API Key Setup")
             print("=" * 40)
-            print(f"To use AI-powered OCR, you need a {service.title()} API key.")
-            print(f"Get your API key from: https://console.anthropic.com/")
+            
+            # Service-specific instructions
+            if service == 'anthropic':
+                print("To use AI-powered OCR, you need an Anthropic API key.")
+                print("Get your API key from: https://console.anthropic.com/")
+            elif service == 'readwise':
+                print("To sync to Readwise, you need a Readwise access token.")
+                print("Get your access token from: https://readwise.io/access_token")
+            elif service == 'notion':
+                print("To sync to Notion, you need a Notion integration token.")
+                print("Get your token from: https://developers.notion.com/")
+            else:
+                print(f"You need a {service.title()} API key.")
+            
             print("")
             
             api_key = getpass.getpass("Enter your API key (input hidden): ").strip()
@@ -345,12 +400,18 @@ class APIKeyManager:
                 print("No API key entered.")
                 return None
             
-            # Basic validation
+            # Service-specific validation
             if service == 'anthropic' and not api_key.startswith('sk-ant-'):
                 print("⚠️  Warning: Anthropic API keys usually start with 'sk-ant-'")
                 confirm = input("Continue anyway? (y/N): ").strip().lower()
                 if confirm != 'y':
                     return None
+            elif service == 'notion' and not api_key.startswith('secret_'):
+                print("⚠️  Warning: Notion integration tokens usually start with 'secret_'")
+                confirm = input("Continue anyway? (y/N): ").strip().lower()
+                if confirm != 'y':
+                    return None
+            # Note: Readwise tokens don't have a standard prefix
             
             # Confirm storage method
             storage_options = []
@@ -388,6 +449,16 @@ def get_api_key_manager() -> APIKeyManager:
 def get_anthropic_api_key() -> Optional[str]:
     """Convenience function to get Anthropic API key."""
     return get_api_key_manager().get_anthropic_api_key()
+
+
+def get_readwise_api_key() -> Optional[str]:
+    """Convenience function to get Readwise API key."""
+    return get_api_key_manager().get_readwise_api_key()
+
+
+def get_notion_api_key() -> Optional[str]:
+    """Convenience function to get Notion API key."""
+    return get_api_key_manager().get_notion_api_key()
 
 
 # Test function

@@ -237,3 +237,6 @@ __marimo__/
 # Local-only generated data
 local_data/
 .DS_Store
+
+# Concept documents (not for public repo)
+concepts/

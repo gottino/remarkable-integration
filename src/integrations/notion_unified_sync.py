@@ -522,10 +522,13 @@ class NotionSyncTarget(SyncTarget):
                                         "date": {"start": notebook.metadata.last_opened.isoformat()}
                                     }
 
+                            # Debug: Log what we're sending to Notion
+                            self.logger.info(f"🔍 DEBUG: Sending properties to Notion for {notebook.name}: {properties}")
+
                             # Update the Notion page properties
-                            self.notion_client.client.pages.update(page_id=existing_page_id, properties=properties)
+                            response = self.notion_client.client.pages.update(page_id=existing_page_id, properties=properties)
                             refreshed_count += 1
-                            self.logger.debug(f"✅ Updated metadata for {notebook.name}")
+                            self.logger.info(f"✅ Updated metadata for {notebook.name} - Response: {response.get('id', 'No ID')}")
                         else:
                             self.logger.debug(f"⏭️ No existing Notion page found for {notebook.name} - skipping metadata refresh")
 

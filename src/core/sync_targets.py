@@ -1,8 +1,15 @@
 """
-Concrete implementations of sync targets for the event-driven sync engine.
+Concrete implementations of sync targets for the unified sync engine.
 
 This module provides specific implementations for each downstream target
-(Notion, Readwise, etc.) that implement the SyncTarget interface.
+(Notion, Readwise, etc.) that implement the SyncTarget interface and integrate
+with the unified sync_records table architecture.
+
+Key Features:
+- Integration with unified sync_records table
+- Target-agnostic sync interface
+- Content-hash based deduplication
+- Consistent error handling and retry logic
 """
 
 import logging
@@ -719,66 +726,41 @@ class NotionSyncTarget(SyncTarget):
         return DatabaseManager('./data/remarkable_pipeline.db')
 
 
-class ReadwiseSyncTarget(SyncTarget):
-    """
-    Readwise implementation of the sync target interface.
+# Import the full Readwise implementation
+try:
+    from ..integrations.readwise_sync import ReadwiseSyncTarget
+except ImportError as e:
+    logger.warning(f"Readwise integration not available: {e}")
     
-    This would handle syncing highlights and annotations to Readwise.
-    """
-    
-    def __init__(self, api_token: str):
-        super().__init__("readwise")
-        self.api_token = api_token
-    
-    async def sync_item(self, item: SyncItem) -> SyncResult:
-        """Sync a single item to Readwise."""
-        if item.item_type == SyncItemType.HIGHLIGHT:
-            return await self._sync_highlight(item)
-        else:
+    # Fallback stub implementation
+    class ReadwiseSyncTarget(SyncTarget):
+        """Fallback Readwise target when integration is not available."""
+        
+        def __init__(self, access_token: str, **kwargs):
+            super().__init__("readwise")
+            self.access_token = access_token
+        
+        async def sync_item(self, item: SyncItem) -> SyncResult:
             return SyncResult(
-                status=SyncStatus.SKIPPED,
-                metadata={'reason': f'Readwise only supports highlights, got {item.item_type}'}
+                status=SyncStatus.FAILED,
+                error_message="Readwise integration not available - missing dependencies"
             )
-    
-    async def _sync_highlight(self, item: SyncItem) -> SyncResult:
-        """Sync a highlight to Readwise."""
-        # Placeholder for Readwise API integration
-        self.logger.info(f"Would sync highlight to Readwise: {item.item_id}")
-        return SyncResult(
-            status=SyncStatus.SKIPPED,
-            metadata={'reason': 'Readwise integration not yet implemented'}
-        )
-    
-    async def check_duplicate(self, content_hash: str) -> Optional[str]:
-        """Check if content already exists in Readwise."""
-        return None  # Not implemented yet
-    
-    async def update_item(self, external_id: str, item: SyncItem) -> SyncResult:
-        """Update an existing item in Readwise."""
-        return SyncResult(
-            status=SyncStatus.FAILED,
-            error_message="Updates not supported for Readwise"
-        )
-    
-    async def delete_item(self, external_id: str) -> SyncResult:
-        """Delete an item from Readwise."""
-        return SyncResult(
-            status=SyncStatus.FAILED,
-            error_message="Deletion not supported for Readwise"
-        )
-    
-    def get_target_info(self) -> Dict[str, Any]:
-        """Get information about this Readwise target."""
-        return {
-            'target_name': self.target_name,
-            'connected': bool(self.api_token),
-            'capabilities': {
-                'notebooks': False,
-                'todos': False,
-                'highlights': True,
-                'page_text': False
+        
+        async def check_duplicate(self, content_hash: str) -> Optional[str]:
+            return None
+        
+        async def update_item(self, external_id: str, item: SyncItem) -> SyncResult:
+            return SyncResult(status=SyncStatus.FAILED, error_message="Not available")
+        
+        async def delete_item(self, external_id: str) -> SyncResult:
+            return SyncResult(status=SyncStatus.FAILED, error_message="Not available")
+        
+        def get_target_info(self) -> Dict[str, Any]:
+            return {
+                'target_name': self.target_name,
+                'connected': False,
+                'error': 'Integration not available'
             }
-        }
 
 
 class MockSyncTarget(SyncTarget):
@@ -891,7 +873,9 @@ def create_sync_target(target_type: str, **kwargs) -> SyncTarget:
         )
     elif target_type == "readwise":
         return ReadwiseSyncTarget(
-            api_token=kwargs.get('api_token')
+            access_token=kwargs.get('access_token') or kwargs.get('api_token'),
+            author_name=kwargs.get('author_name', 'reMarkable'),
+            default_category=kwargs.get('default_category', 'books')
         )
     elif target_type == "mock":
         return MockSyncTarget(

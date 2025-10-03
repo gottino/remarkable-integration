@@ -1,8 +1,13 @@
 """
-Migration tool for transitioning from legacy sync to event-driven sync engine.
+Migration tools for unified sync tracking system.
 
-This handles the complex task of migrating from existing Notion sync to the new
-event-driven system without creating duplicates or losing data.
+This handles:
+1. Schema migrations for unified sync_records table
+2. Legacy data migration from integration-specific tables  
+3. Transitioning from legacy sync to unified event-driven sync engine
+
+The unified sync system replaces multiple integration-specific sync tables
+with a single sync_records table using target_name approach.
 """
 
 import logging
@@ -13,6 +18,344 @@ import json
 from .sync_engine import ContentFingerprint, DeduplicationService, SyncItemType, SyncStatus
 
 logger = logging.getLogger(__name__)
+
+
+class UnifiedSyncMigration:
+    """Handles migrations for the unified sync tracking system."""
+    
+    def __init__(self, db_manager):
+        self.db_manager = db_manager
+        self.logger = logging.getLogger(f"{__name__}.UnifiedSyncMigration")
+    
+    def migrate_to_unified_sync_schema(self) -> bool:
+        """
+        Migrate sync_records table to support unified sync architecture.
+        
+        Creates the table if it doesn't exist and adds missing columns:
+        - item_id: Local database ID/UUID of the synced item
+        - metadata: JSON field for target-specific metadata
+        
+        Returns:
+            True if migration was successful, False otherwise
+        """
+        self.logger.info("Starting migration to unified sync schema")
+        
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # First, ensure the sync_records table exists
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS sync_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        content_hash TEXT NOT NULL,
+                        target_name TEXT NOT NULL,
+                        external_id TEXT NOT NULL,
+                        item_type TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        error_message TEXT,
+                        retry_count INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        synced_at TIMESTAMP,
+                        UNIQUE(content_hash, target_name)
+                    )
+                ''')
+                
+                # Create basic indexes
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_sync_records_hash ON sync_records(content_hash)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_sync_records_target ON sync_records(target_name)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_sync_records_status ON sync_records(status)')
+                
+                # Check current schema
+                cursor.execute("PRAGMA table_info(sync_records)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                migrations_applied = []
+                
+                # Add item_id column if missing
+                if 'item_id' not in columns:
+                    self.logger.info("Adding item_id column to sync_records")
+                    cursor.execute('ALTER TABLE sync_records ADD COLUMN item_id TEXT')
+                    migrations_applied.append('item_id')
+                
+                # Add metadata column if missing
+                if 'metadata' not in columns:
+                    self.logger.info("Adding metadata column to sync_records")
+                    cursor.execute('ALTER TABLE sync_records ADD COLUMN metadata TEXT')
+                    migrations_applied.append('metadata')
+                
+                # Create new indexes for the added columns
+                if 'item_id' in migrations_applied:
+                    cursor.execute('''
+                        CREATE INDEX IF NOT EXISTS idx_sync_records_item_id 
+                        ON sync_records(item_id)
+                    ''')
+                
+                # Update unique constraint to improve deduplication
+                if migrations_applied:
+                    self.logger.info("Creating enhanced indexes for unified sync")
+                    cursor.execute('''
+                        CREATE INDEX IF NOT EXISTS idx_sync_records_content_target_item 
+                        ON sync_records(content_hash, target_name, item_id)
+                    ''')
+                
+                conn.commit()
+                
+                if migrations_applied:
+                    self.logger.info(f"Schema migration completed. Applied: {', '.join(migrations_applied)}")
+                else:
+                    self.logger.info("Schema already up to date")
+                
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Schema migration failed: {e}")
+            return False
+    
+    def migrate_legacy_sync_tables(self) -> bool:
+        """
+        Migrate data from legacy sync tables to unified sync_records.
+        
+        Migrates from:
+        - notion_notebook_sync -> sync_records
+        - notion_page_sync -> sync_records  
+        - notion_todo_sync -> sync_records (if exists)
+        
+        Returns:
+            True if migration was successful, False otherwise
+        """
+        self.logger.info("Starting migration of legacy sync tables")
+        
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                migrated_count = 0
+                
+                # Migrate notion_notebook_sync
+                migrated_count += self._migrate_notion_notebook_sync(cursor)
+                
+                # Migrate notion_page_sync
+                migrated_count += self._migrate_notion_page_sync(cursor)
+                
+                # Migrate notion_todo_sync if it exists
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name='notion_todo_sync'
+                """)
+                if cursor.fetchone():
+                    migrated_count += self._migrate_notion_todo_sync(cursor)
+                
+                conn.commit()
+                
+                self.logger.info(f"Legacy migration completed. Migrated {migrated_count} records")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Legacy migration failed: {e}")
+            return False
+    
+    def _migrate_notion_notebook_sync(self, cursor) -> int:
+        """Migrate notion_notebook_sync to sync_records."""
+        try:
+            cursor.execute("""
+                SELECT notebook_uuid, notion_page_id, last_synced, 
+                       content_hash, total_pages, metadata_hash
+                FROM notion_notebook_sync
+            """)
+            
+            notebook_records = cursor.fetchall()
+            migrated = 0
+            
+            for record in notebook_records:
+                notebook_uuid, notion_page_id, last_synced, content_hash, total_pages, metadata_hash = record
+                
+                # Create metadata JSON
+                metadata = {
+                    'total_pages': total_pages,
+                    'metadata_hash': metadata_hash,
+                    'migration_source': 'notion_notebook_sync'
+                }
+                
+                # Insert into sync_records
+                cursor.execute("""
+                    INSERT OR IGNORE INTO sync_records 
+                    (content_hash, target_name, external_id, item_type, status,
+                     item_id, metadata, created_at, updated_at, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    content_hash or '',
+                    'notion',
+                    notion_page_id,
+                    'notebook',
+                    'success',
+                    notebook_uuid,
+                    json.dumps(metadata),
+                    last_synced or datetime.now().isoformat(),
+                    last_synced or datetime.now().isoformat(),
+                    last_synced
+                ))
+                
+                migrated += cursor.rowcount
+            
+            self.logger.info(f"Migrated {migrated} notebook sync records")
+            return migrated
+            
+        except Exception as e:
+            self.logger.error(f"Failed to migrate notion_notebook_sync: {e}")
+            return 0
+    
+    def _migrate_notion_page_sync(self, cursor) -> int:
+        """Migrate notion_page_sync to sync_records."""
+        try:
+            cursor.execute("""
+                SELECT notebook_uuid, page_number, page_uuid, content_hash,
+                       last_synced, notion_block_id
+                FROM notion_page_sync
+            """)
+            
+            page_records = cursor.fetchall()
+            migrated = 0
+            
+            for record in page_records:
+                notebook_uuid, page_number, page_uuid, content_hash, last_synced, notion_block_id = record
+                
+                # Create metadata JSON
+                metadata = {
+                    'notebook_uuid': notebook_uuid,
+                    'page_number': page_number,
+                    'notion_block_id': notion_block_id,
+                    'migration_source': 'notion_page_sync'
+                }
+                
+                # Use page_uuid as item_id, fallback to composite key
+                item_id = page_uuid or f"{notebook_uuid}::{page_number}"
+                
+                # Insert into sync_records
+                cursor.execute("""
+                    INSERT OR IGNORE INTO sync_records 
+                    (content_hash, target_name, external_id, item_type, status,
+                     item_id, metadata, created_at, updated_at, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    content_hash or '',
+                    'notion',
+                    notion_block_id or '',
+                    'page_text',
+                    'success' if notion_block_id else 'pending',
+                    item_id,
+                    json.dumps(metadata),
+                    last_synced or datetime.now().isoformat(),
+                    last_synced or datetime.now().isoformat(),
+                    last_synced
+                ))
+                
+                migrated += cursor.rowcount
+            
+            self.logger.info(f"Migrated {migrated} page sync records")
+            return migrated
+            
+        except Exception as e:
+            self.logger.error(f"Failed to migrate notion_page_sync: {e}")
+            return 0
+    
+    def _migrate_notion_todo_sync(self, cursor) -> int:
+        """Migrate notion_todo_sync to sync_records."""
+        try:
+            cursor.execute("""
+                SELECT todo_id, notion_page_id, exported_at
+                FROM notion_todo_sync
+            """)
+            
+            todo_records = cursor.fetchall()
+            migrated = 0
+            
+            for record in todo_records:
+                todo_id, notion_page_id, exported_at = record
+                
+                # Create metadata JSON
+                metadata = {
+                    'migration_source': 'notion_todo_sync'
+                }
+                
+                # Insert into sync_records
+                cursor.execute("""
+                    INSERT OR IGNORE INTO sync_records 
+                    (content_hash, target_name, external_id, item_type, status,
+                     item_id, metadata, created_at, updated_at, synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    '',  # No content_hash available from legacy table
+                    'notion',
+                    notion_page_id,
+                    'todo',
+                    'success',
+                    str(todo_id),
+                    json.dumps(metadata),
+                    exported_at or datetime.now().isoformat(),
+                    exported_at or datetime.now().isoformat(),
+                    exported_at
+                ))
+                
+                migrated += cursor.rowcount
+            
+            self.logger.info(f"Migrated {migrated} todo sync records")
+            return migrated
+            
+        except Exception as e:
+            self.logger.error(f"Failed to migrate notion_todo_sync: {e}")
+            return 0
+    
+    def validate_migration(self) -> Dict[str, Any]:
+        """
+        Validate the migration results.
+        
+        Returns:
+            Dictionary with validation results and statistics
+        """
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Check sync_records table structure
+                cursor.execute("PRAGMA table_info(sync_records)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                # Count records by source
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total_records,
+                        COUNT(CASE WHEN item_id IS NOT NULL THEN 1 END) as with_item_id,
+                        COUNT(CASE WHEN metadata IS NOT NULL THEN 1 END) as with_metadata
+                    FROM sync_records
+                """)
+                counts = cursor.fetchone()
+                
+                # Count by target and type
+                cursor.execute("""
+                    SELECT target_name, item_type, COUNT(*) 
+                    FROM sync_records 
+                    GROUP BY target_name, item_type
+                    ORDER BY target_name, item_type
+                """)
+                breakdown = cursor.fetchall()
+                
+                return {
+                    'schema_valid': all(col in columns for col in ['item_id', 'metadata']),
+                    'columns': columns,
+                    'total_records': counts[0] if counts else 0,
+                    'records_with_item_id': counts[1] if counts else 0,
+                    'records_with_metadata': counts[2] if counts else 0,
+                    'target_type_breakdown': [
+                        {'target': row[0], 'type': row[1], 'count': row[2]} 
+                        for row in breakdown
+                    ]
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Migration validation failed: {e}")
+            return {'error': str(e)}
 
 
 class SyncMigrationAnalyzer:
@@ -691,3 +1034,45 @@ if __name__ == "__main__":
     
     # Run the test
     asyncio.run(test_migration_analysis())
+
+
+def run_unified_sync_migration(db_manager) -> bool:
+    """
+    Run the complete migration to unified sync architecture.
+    
+    Args:
+        db_manager: Database manager instance
+        
+    Returns:
+        True if all migrations successful, False otherwise
+    """
+    migration = UnifiedSyncMigration(db_manager)
+    
+    logger.info("🔄 Starting unified sync migration")
+    
+    # Step 1: Migrate schema
+    if not migration.migrate_to_unified_sync_schema():
+        logger.error("❌ Schema migration failed")
+        return False
+    
+    # Step 2: Migrate legacy data
+    if not migration.migrate_legacy_sync_tables():
+        logger.error("❌ Legacy data migration failed")
+        return False
+    
+    # Step 3: Validate results
+    validation = migration.validate_migration()
+    if 'error' in validation:
+        logger.error(f"❌ Migration validation failed: {validation['error']}")
+        return False
+    
+    if not validation.get('schema_valid', False):
+        logger.error("❌ Schema validation failed")
+        return False
+    
+    logger.info("✅ Unified sync migration completed successfully")
+    logger.info(f"📊 Total records: {validation['total_records']}")
+    logger.info(f"🆔 Records with item_id: {validation['records_with_item_id']}")
+    logger.info(f"📦 Records with metadata: {validation['records_with_metadata']}")
+    
+    return True

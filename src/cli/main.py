@@ -22,6 +22,9 @@ import click
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 from src.utils.config import Config
 from src.utils.api_keys import get_api_key_manager
 from src.core.database import DatabaseManager
@@ -1362,7 +1365,7 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
         click.echo("\n📖 Step 2: Extracting highlights from PDF/EPUB documents...")
         
         if enhanced_highlights:
-            from src.processors.enhanced_highlight_extractor import process_directory_enhanced
+            from src.processors.enhanced_highlight_extractor_v3 import process_directory_enhanced
             highlight_results = process_directory_enhanced(directory, db_manager)
             highlight_type = "enhanced passages"
         else:
@@ -1380,14 +1383,15 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
             with db_manager.get_connection() as conn:
                 if export_highlights:
                     if enhanced_highlights:
-                        from src.processors.enhanced_highlight_extractor import EnhancedHighlightExtractor
-                        extractor = EnhancedHighlightExtractor(conn)
-                        extractor.export_enhanced_highlights_to_csv(export_highlights)
+                        # V3 enhanced extractor stores in database, export via direct SQL query
+                        click.echo("   ⚠️  Direct CSV export not yet implemented for v3 enhanced extractor")
+                        click.echo(f"   💡 Query results from database: sqlite3 {db_manager.db_path}")
+                        click.echo(f"   💡 Table: enhanced_highlights")
                     else:
                         from src.processors.highlight_extractor import HighlightExtractor
                         extractor = HighlightExtractor(conn)
                         extractor.export_highlights_to_csv(export_highlights)
-                    click.echo(f"   ✅ Highlights exported to: {export_highlights}")
+                        click.echo(f"   ✅ Highlights exported to: {export_highlights}")
                 
                 if export_text:
                     # Export text extraction results
@@ -1558,10 +1562,11 @@ def export_data(ctx, output: str, enhanced: bool, ocr: bool, title: Optional[str
 @click.option('--source-directory', help='reMarkable app directory to watch (overrides config)')
 @click.option('--database', help='Database path (overrides config)')
 @click.option('--sync-on-startup', is_flag=True, default=True, help='Perform initial sync on startup')
+@click.option('--force-startup-sync', is_flag=True, default=False, help='Force startup sync even with many pending items')
 @click.option('--process-immediately', is_flag=True, default=True, help='Process files immediately after sync')
 @click.pass_context
-def watch_directory(ctx, source_directory: Optional[str], 
-                   database: Optional[str], sync_on_startup: bool, process_immediately: bool):
+def watch_directory(ctx, source_directory: Optional[str],
+                   database: Optional[str], sync_on_startup: bool, force_startup_sync: bool, process_immediately: bool):
     """Watch reMarkable source directory for changes and process automatically."""
     
     config_obj = ctx.obj['config']
@@ -1616,6 +1621,9 @@ def watch_directory(ctx, source_directory: Optional[str],
         # Create watcher
         watcher = ReMarkableWatcher(config_obj)
         watcher.set_text_extractor(text_extractor)
+        
+        # Setup unified sync system with database connection
+        watcher.setup_unified_sync(db_manager)
         
         # Set up Notion integration if configured
         notion_enabled = config_obj.get('integrations.notion.enabled', False)
@@ -1696,10 +1704,16 @@ def watch_directory(ctx, source_directory: Optional[str],
             """Run the watcher system."""
             try:
                 success = await watcher.start()
-                
+
                 if not success:
                     click.echo("❌ Failed to start watching system", err=True)
                     return False
+
+                # Perform startup sync if enabled
+                if sync_on_startup:
+                    click.echo("🔄 Checking for pending items to sync...")
+                    await watcher.sync_pending_items(force_sync=force_startup_sync)
+                    click.echo()
                 
                 click.echo("✅ File watching system started successfully!")
                 click.echo("📡 Monitoring reMarkable directory for changes...")

@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+from .secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 
@@ -215,6 +217,43 @@ class Config:
         
         return current
     
+    def get_secret_aware(self, key: str, default: Any = None) -> Any:
+        """
+        Get configuration value with secrets manager integration.
+        
+        For sensitive keys (like api_token), tries:
+        1. System keyring via secrets manager
+        2. Environment variables via secrets manager
+        3. Configuration file value
+        4. Default value
+        
+        Args:
+            key: Configuration key in dot notation
+            default: Default value if not found
+            
+        Returns:
+            Configuration value from most secure source available
+        """
+        # Check if this is a sensitive key that should use secrets manager
+        sensitive_keys = [
+            'integrations.notion.api_token',
+            'integrations.readwise.api_token', 
+            'integrations.microsoft_todo.client_id',
+            'integrations.microsoft_todo.client_secret'
+        ]
+        
+        if key in sensitive_keys:
+            # Convert config key to secrets key format
+            secret_key = key.replace('integrations.', '')
+            
+            # Try secrets manager first
+            secret_value = get_secret(secret_key)
+            if secret_value:
+                return secret_value
+        
+        # Fallback to regular config lookup
+        return self.get(key, default)
+    
     def set(self, key: str, value: Any):
         """
         Set configuration value using dot notation.
@@ -381,7 +420,16 @@ logging:
                 issues.append("Notion integration enabled but no API token provided")
         
         if self.is_enabled('integrations.readwise'):
-            if not self.get('integrations.readwise.api_token'):
+            # Check both config file and keychain for API token
+            config_token = self.get('integrations.readwise.api_token')
+            keychain_token = None
+            try:
+                from ..utils.api_keys import get_readwise_api_key
+                keychain_token = get_readwise_api_key()
+            except ImportError:
+                pass  # api_keys module not available
+            
+            if not config_token and not keychain_token:
                 issues.append("Readwise integration enabled but no API token provided")
         
         return issues

@@ -40,6 +40,7 @@ scipy = {version = ">=1.11.0", markers = "python_version >= \"3.11\""}
 anthropic = "^0.64.0"
 keyring = "^25.6.0"
 cryptography = "^45.0.6"
+aiohttp = "^3.12.15"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^6.0.0"

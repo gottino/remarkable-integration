@@ -1,0 +1,200 @@
+2025-09-17 09:47:49,217 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 18/50 (UUID: 7877ea10-2d4f-4df3-bd3b-035db058139e)
+2025-09-17 09:47:49,218 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 18: Already processed, skipping
+2025-09-17 09:47:49,218 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 19/50 (UUID: ce80da4b-dcdd-42b4-ac7f-8343cd2921ca)
+2025-09-17 09:47:49,220 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 19: Already processed, skipping
+2025-09-17 09:47:49,220 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 20/50 (UUID: 9eea02e6-a4db-4bb8-994f-bd3843bb9e1b)
+2025-09-17 09:47:49,221 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 20: Already processed, skipping
+2025-09-17 09:47:49,221 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 21/50 (UUID: b22071c7-073e-4d23-9123-87a17f7789e0)
+2025-09-17 09:47:49,223 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 21: Already processed, skipping
+2025-09-17 09:47:49,223 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 22/50 (UUID: a6762d6b-2777-4786-b58d-ac5ccc3515ac)
+2025-09-17 09:47:49,224 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 22: Already processed, skipping
+2025-09-17 09:47:49,224 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 23/50 (UUID: 3f744739-eeba-43b6-a8a7-cccd5d80cb7a)
+2025-09-17 09:47:49,225 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 23: Already processed, skipping
+2025-09-17 09:47:49,226 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 24/50 (UUID: 661f969e-cebe-46be-b453-8ceca6438f7c)
+2025-09-17 09:47:49,227 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 24: Already processed, skipping
+2025-09-17 09:47:49,227 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 25/50 (UUID: 708e1786-4e64-4157-819e-f737781fb852)
+2025-09-17 09:47:49,228 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 25: Already processed, skipping
+2025-09-17 09:47:49,229 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 26/50 (UUID: 5c39218c-1934-4d71-804d-c118aed23414)
+2025-09-17 09:47:49,231 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 26: Already processed, skipping
+2025-09-17 09:47:49,231 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 27/50 (UUID: 4cf76547-ea42-4e10-a6c2-2ceb25e6a250)
+2025-09-17 09:47:49,235 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 27: Already processed, skipping
+2025-09-17 09:47:49,235 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 28/50 (UUID: c11a9bfd-b06e-463b-91d6-ad23f21ada07)
+2025-09-17 09:47:49,237 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 28: Already processed, skipping
+2025-09-17 09:47:49,237 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 29/50 (UUID: 412415d4-88c5-4471-9562-7238026c7810)
+2025-09-17 09:47:49,238 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 29: Already processed, skipping
+2025-09-17 09:47:49,238 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 30/50 (UUID: fc1bc3c8-e2e7-4501-9143-4afb8e4a22e0)
+2025-09-17 09:47:49,239 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 30: Already processed, skipping
+2025-09-17 09:47:49,239 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 31/50 (UUID: 8aaa9cd1-d96f-4219-8ef4-dccc43be0d61)
+2025-09-17 09:47:49,241 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 31: Already processed, skipping
+2025-09-17 09:47:49,241 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 32/50 (UUID: 715b5766-794b-48ad-8976-53a5ad7026b4)
+2025-09-17 09:47:49,242 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 32: Already processed, skipping
+2025-09-17 09:47:49,242 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 33/50 (UUID: 5df20c77-2581-4686-936e-216f2e3fd1d5)
+2025-09-17 09:47:49,243 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 33: Already processed, skipping
+2025-09-17 09:47:49,243 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 34/50 (UUID: ba3fbd4f-96a6-4f5f-b051-185197c5ffb6)
+2025-09-17 09:47:49,244 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 34: Already processed, skipping
+2025-09-17 09:47:49,244 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 35/50 (UUID: 82bde99c-9164-4b96-bc9d-d4f1d0019f59)
+2025-09-17 09:47:49,245 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 35: Already processed, skipping
+2025-09-17 09:47:49,246 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 36/50 (UUID: 4366d519-5630-4227-a9ef-b0015bbfa2de)
+2025-09-17 09:47:49,247 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 36: Already processed, skipping
+2025-09-17 09:47:49,247 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 37/50 (UUID: 2410cd07-2e10-433d-8789-687dd9f10619)
+2025-09-17 09:47:49,248 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 37: Already processed, skipping
+2025-09-17 09:47:49,248 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 38/50 (UUID: d16f545e-ee84-4bc1-acf7-febcb6277c5f)
+2025-09-17 09:47:49,249 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 38: Already processed, skipping
+2025-09-17 09:47:49,249 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 39/50 (UUID: 45994861-68c2-4a02-81ce-fc676b63b1c1)
+2025-09-17 09:47:49,250 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 39: Already processed, skipping
+2025-09-17 09:47:49,250 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 40/50 (UUID: 6bba6a28-761f-4428-80b4-7223072398a9)
+2025-09-17 09:47:49,251 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 40: Already processed, skipping
+2025-09-17 09:47:49,251 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 41/50 (UUID: 9a42898e-5c86-4bd8-90d9-f6786fcbf54b)
+2025-09-17 09:47:49,253 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 41: Already processed, skipping
+2025-09-17 09:47:49,253 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 42/50 (UUID: 3a953cdb-60d3-4f36-8e7c-1955ae34d63f)
+2025-09-17 09:47:49,254 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 42: Already processed, skipping
+2025-09-17 09:47:49,254 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 43/50 (UUID: 7452c4c9-b529-493b-bb47-1ec14d56388d)
+2025-09-17 09:47:49,255 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 43: Already processed, skipping
+2025-09-17 09:47:49,255 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 44/50 (UUID: 90dc6bdc-be03-495a-a926-6c36820cd825)
+2025-09-17 09:47:49,257 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 44: Already processed, skipping
+2025-09-17 09:47:49,257 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 45/50 (UUID: 9fde966f-3c55-479d-a4b6-4d497e14f762)
+2025-09-17 09:47:49,258 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 45: Already processed, skipping
+2025-09-17 09:47:49,258 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 46/50 (UUID: 3df6ec33-8b7a-4bd0-a8ab-d38b1228f6d5)
+2025-09-17 09:47:49,260 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 46: Already processed, skipping
+2025-09-17 09:47:49,260 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 47/50 (UUID: bacd8b89-4a0b-4224-9bc3-73a9a6ea3066)
+2025-09-17 09:47:49,261 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 47: Already processed, skipping
+2025-09-17 09:47:49,261 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 48/50 (UUID: 86edaa3c-14e6-4cc3-b8a2-550903eeef5b)
+2025-09-17 09:47:49,262 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 48: Already processed, skipping
+2025-09-17 09:47:49,262 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 49/50 (UUID: b8e6c300-8f54-4b73-b47f-ee07d5e45654)
+2025-09-17 09:47:49,263 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 49: Already processed, skipping
+2025-09-17 09:47:49,263 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 50/50 (UUID: 68e00842-eb8a-4d96-85ee-100c6b9b842d)
+2025-09-17 09:47:49,264 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 50: Already processed, skipping
+2025-09-17 09:47:49,265 - src.processors.notebook_text_extractor - INFO -   ✓ Completed: 0 text regions from 0 pages
+2025-09-17 09:47:49,265 - src.processors.notebook_text_extractor - INFO -   ✓ Extracted 0 todo items
+2025-09-17 09:47:49,265 - src.processors.notebook_text_extractor - INFO - ✅ Incremental processing complete: 0 pages processed
+2025-09-17 09:47:49,271 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 09:47:49,272 - src.core.file_watcher - INFO - 🔄 Processing notebook change: 834a0839-af55-4c1d-9183-4ee5608508c7
+2025-09-17 09:47:49,272 - src.core.file_watcher - INFO - 🔍 Processing check for 834a0839-af55-4c1d-9183-4ee5608508c7: locks=['639b1387-8b92-4e24-b3f7-57f8c2704933', 'dbf546ea-3543-422b-b8ef-2586b483cc3e', '7c2cf4a0-1051-434d-a2d5-be3c55b69c12', '09eb43d8-5dd7-499d-9fbd-72226a5fcf2b', '01eb6571-8933-4b1d-818f-34466a5d21c4', 'e14f1f09-a033-455f-88b2-88e3b4352c9d', '3a8f34e7-24a8-484b-8f83-f6e122b184cb', '2d2a066e-0046-4c26-a962-0fdd0d79ab7f', '9d1b89be-25a0-4a84-a8a0-c71fe8768812', 'ae74caa1-c2fc-4ee8-927b-97e0e74c277e', '5df1f706-47f2-48ac-a585-c7ec83450c51', '138f7e3e-9584-4cb9-9762-f268226ff119', '8bc19ba5-efb0-4e42-9d7a-e6a437d8b57d', '3953e421-dd2b-42fe-b915-ef42e777e184', '834a0839-af55-4c1d-9183-4ee5608508c7']
+2025-09-17 09:47:49,272 - src.core.file_watcher - INFO - 🔍 Last processed 0.1s ago
+2025-09-17 09:47:49,272 - src.core.file_watcher - INFO - ⏭️ Skipping duplicate processing for 834a0839-af55-4c1d-9183-4ee5608508c7 (processed 0.1s ago)
+2025-09-17 09:47:49,273 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 09:47:49,273 - src.core.file_watcher - INFO - 🔄 Processing notebook change: 834a0839-af55-4c1d-9183-4ee5608508c7
+2025-09-17 09:47:49,273 - src.core.file_watcher - INFO - 🔍 Processing check for 834a0839-af55-4c1d-9183-4ee5608508c7: locks=['639b1387-8b92-4e24-b3f7-57f8c2704933', 'dbf546ea-3543-422b-b8ef-2586b483cc3e', '7c2cf4a0-1051-434d-a2d5-be3c55b69c12', '09eb43d8-5dd7-499d-9fbd-72226a5fcf2b', '01eb6571-8933-4b1d-818f-34466a5d21c4', 'e14f1f09-a033-455f-88b2-88e3b4352c9d', '3a8f34e7-24a8-484b-8f83-f6e122b184cb', '2d2a066e-0046-4c26-a962-0fdd0d79ab7f', '9d1b89be-25a0-4a84-a8a0-c71fe8768812', 'ae74caa1-c2fc-4ee8-927b-97e0e74c277e', '5df1f706-47f2-48ac-a585-c7ec83450c51', '138f7e3e-9584-4cb9-9762-f268226ff119', '8bc19ba5-efb0-4e42-9d7a-e6a437d8b57d', '3953e421-dd2b-42fe-b915-ef42e777e184', '834a0839-af55-4c1d-9183-4ee5608508c7']
+2025-09-17 09:47:49,274 - src.core.file_watcher - INFO - 🔍 Last processed 0.1s ago
+2025-09-17 09:47:49,274 - src.core.file_watcher - INFO - ⏭️ Skipping duplicate processing for 834a0839-af55-4c1d-9183-4ee5608508c7 (processed 0.1s ago)
+2025-09-17 11:14:16,465 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 11:14:16,468 - src.core.file_watcher - INFO - 🔄 Processing notebook change: 3bd6ed13-f6c1-4e5d-8756-27304ab58e19
+2025-09-17 11:14:16,468 - src.core.file_watcher - INFO - 🔍 Processing check for 3bd6ed13-f6c1-4e5d-8756-27304ab58e19: locks=['639b1387-8b92-4e24-b3f7-57f8c2704933', 'dbf546ea-3543-422b-b8ef-2586b483cc3e', '7c2cf4a0-1051-434d-a2d5-be3c55b69c12', '09eb43d8-5dd7-499d-9fbd-72226a5fcf2b', '01eb6571-8933-4b1d-818f-34466a5d21c4', 'e14f1f09-a033-455f-88b2-88e3b4352c9d', '3a8f34e7-24a8-484b-8f83-f6e122b184cb', '2d2a066e-0046-4c26-a962-0fdd0d79ab7f', '9d1b89be-25a0-4a84-a8a0-c71fe8768812', 'ae74caa1-c2fc-4ee8-927b-97e0e74c277e', '5df1f706-47f2-48ac-a585-c7ec83450c51', '138f7e3e-9584-4cb9-9762-f268226ff119', '8bc19ba5-efb0-4e42-9d7a-e6a437d8b57d', '3953e421-dd2b-42fe-b915-ef42e777e184', '834a0839-af55-4c1d-9183-4ee5608508c7']
+2025-09-17 11:14:16,471 - src.core.file_watcher - INFO - 🔍 Marking 3bd6ed13-f6c1-4e5d-8756-27304ab58e19 as processing at 1758100456.468818
+2025-09-17 11:14:16,523 - src.processors.notebook_text_extractor - INFO - ⏭️ Skipping OCR for PDF document: feynman-lectures.pdf
+2025-09-17 11:14:16,523 - src.processors.notebook_text_extractor - INFO - ⏭️ Skipping non-handwritten document (no OCR needed): feynman-lectures.pdf
+2025-09-17 11:14:16,523 - src.core.file_watcher - WARNING - ⚠️ Processing failed for 3bd6ed13-f6c1-4e5d-8756-27304ab58e19: Document type does not require OCR: feynman-lectures.pdf
+2025-09-17 11:14:17,940 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 11:14:17,941 - src.core.file_watcher - INFO - 🔄 Processing notebook change: 3bd6ed13-f6c1-4e5d-8756-27304ab58e19
+2025-09-17 11:14:17,941 - src.core.file_watcher - INFO - 🔍 Processing check for 3bd6ed13-f6c1-4e5d-8756-27304ab58e19: locks=['639b1387-8b92-4e24-b3f7-57f8c2704933', 'dbf546ea-3543-422b-b8ef-2586b483cc3e', '7c2cf4a0-1051-434d-a2d5-be3c55b69c12', '09eb43d8-5dd7-499d-9fbd-72226a5fcf2b', '01eb6571-8933-4b1d-818f-34466a5d21c4', 'e14f1f09-a033-455f-88b2-88e3b4352c9d', '3a8f34e7-24a8-484b-8f83-f6e122b184cb', '2d2a066e-0046-4c26-a962-0fdd0d79ab7f', '9d1b89be-25a0-4a84-a8a0-c71fe8768812', 'ae74caa1-c2fc-4ee8-927b-97e0e74c277e', '5df1f706-47f2-48ac-a585-c7ec83450c51', '138f7e3e-9584-4cb9-9762-f268226ff119', '8bc19ba5-efb0-4e42-9d7a-e6a437d8b57d', '3953e421-dd2b-42fe-b915-ef42e777e184', '834a0839-af55-4c1d-9183-4ee5608508c7', '3bd6ed13-f6c1-4e5d-8756-27304ab58e19']
+2025-09-17 11:14:17,942 - src.core.file_watcher - INFO - 🔍 Last processed 1.5s ago
+2025-09-17 11:14:17,942 - src.core.file_watcher - INFO - ⏭️ Skipping duplicate processing for 3bd6ed13-f6c1-4e5d-8756-27304ab58e19 (processed 1.5s ago)
+2025-09-17 11:22:14,578 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 11:22:14,580 - src.core.file_watcher - INFO - 🔄 Processing notebook change: 98afc255-97ee-4416-96db-ac9a16a33109
+2025-09-17 11:22:14,581 - src.core.file_watcher - INFO - 🔍 Processing check for 98afc255-97ee-4416-96db-ac9a16a33109: locks=['639b1387-8b92-4e24-b3f7-57f8c2704933', 'dbf546ea-3543-422b-b8ef-2586b483cc3e', '7c2cf4a0-1051-434d-a2d5-be3c55b69c12', '09eb43d8-5dd7-499d-9fbd-72226a5fcf2b', '01eb6571-8933-4b1d-818f-34466a5d21c4', 'e14f1f09-a033-455f-88b2-88e3b4352c9d', '3a8f34e7-24a8-484b-8f83-f6e122b184cb', '2d2a066e-0046-4c26-a962-0fdd0d79ab7f', '9d1b89be-25a0-4a84-a8a0-c71fe8768812', 'ae74caa1-c2fc-4ee8-927b-97e0e74c277e', '5df1f706-47f2-48ac-a585-c7ec83450c51', '138f7e3e-9584-4cb9-9762-f268226ff119', '8bc19ba5-efb0-4e42-9d7a-e6a437d8b57d', '3953e421-dd2b-42fe-b915-ef42e777e184', '834a0839-af55-4c1d-9183-4ee5608508c7', '3bd6ed13-f6c1-4e5d-8756-27304ab58e19']
+2025-09-17 11:22:14,586 - src.core.file_watcher - INFO - 🔍 Marking 98afc255-97ee-4416-96db-ac9a16a33109 as processing at 1758100934.581085
+2025-09-17 11:22:14,601 - src.processors.notebook_text_extractor - INFO - Processing notebook: Test for integration
+2025-09-17 11:22:14,602 - src.processors.notebook_text_extractor - INFO - Processing notebook: Test for integration
+2025-09-17 11:22:14,604 - src.processors.notebook_text_extractor - INFO -   Found 16 pages
+2025-09-17 11:22:14,605 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 1/16 (UUID: ecb27edd-6ad6-4530-9ad3-7c364c76fbb2)
+2025-09-17 11:22:14,641 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 1: Already processed, skipping
+2025-09-17 11:22:14,642 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 2/16 (UUID: ebdea0cd-e6d4-412a-9d43-5b01b0ad4ae6)
+2025-09-17 11:22:14,670 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 2: Already processed, skipping
+2025-09-17 11:22:14,671 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 3/16 (UUID: 59aec416-cadd-43fa-a7ec-79e755e47d5d)
+2025-09-17 11:22:14,691 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 3: Already processed, skipping
+2025-09-17 11:22:14,691 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 4/16 (UUID: d8159b55-f49f-4a0c-8db0-8f4ab7f6487b)
+2025-09-17 11:22:14,717 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 4: Already processed, skipping
+2025-09-17 11:22:14,718 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 5/16 (UUID: f1f46146-fdbe-434d-90cc-06ad7f07bee2)
+2025-09-17 11:22:14,739 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 5: Already processed, skipping
+2025-09-17 11:22:14,739 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 6/16 (UUID: b098a9b8-e860-4de1-a323-44c6007fb4f1)
+2025-09-17 11:22:14,759 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 6: Already processed, skipping
+2025-09-17 11:22:14,759 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 7/16 (UUID: 2c88614f-ef29-41ae-9baf-4a07872aa8c0)
+2025-09-17 11:22:14,779 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 7: Already processed, skipping
+2025-09-17 11:22:14,779 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 8/16 (UUID: 307a99ec-412f-4468-86a6-181c6b67c9f3)
+2025-09-17 11:22:14,799 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 8: Already processed, skipping
+2025-09-17 11:22:14,799 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 9/16 (UUID: 202fdf49-35d6-4bd5-819b-bcdd962816f5)
+2025-09-17 11:22:14,820 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 9: Already processed, skipping
+2025-09-17 11:22:14,820 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 10/16 (UUID: c223685b-7eef-419b-9b12-cb0fdb6b3c12)
+2025-09-17 11:22:14,841 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 10: Already processed, skipping
+2025-09-17 11:22:14,841 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 11/16 (UUID: 3a8795bd-fcbf-459b-af41-005809db17af)
+2025-09-17 11:22:14,863 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 11: Already processed, skipping
+2025-09-17 11:22:14,863 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 12/16 (UUID: 01db6be2-646c-4f93-9cec-91fde890ed61)
+2025-09-17 11:22:14,884 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 12: Already processed, skipping
+2025-09-17 11:22:14,884 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 13/16 (UUID: d862e847-2975-415c-8554-9371b70f454d)
+2025-09-17 11:22:14,930 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 13: Already processed, skipping
+2025-09-17 11:22:14,931 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 14/16 (UUID: 4067155f-a6cf-4e23-9043-25be676f7001)
+2025-09-17 11:22:14,953 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 14: Already processed, skipping
+2025-09-17 11:22:14,953 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 15/16 (UUID: 83c50da8-3fb4-453c-a2bc-c6c152ce1ce5)
+2025-09-17 11:22:14,977 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 15: Already processed, skipping
+2025-09-17 11:22:14,977 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 16/16 (UUID: 5b826235-fc6d-4754-be63-88ee94622afb)
+2025-09-17 11:22:14,985 - src.processors.notebook_text_extractor - INFO -     🔄 Page 16: Processing (new or changed)
+2025-09-17 11:22:14,989 - rmscene.tagged_block_reader - WARNING - Some data has not been read. The data may have been written using a newer format than this reader supports.
+2025-09-17 11:22:14,989 - rmscene.tagged_block_reader - INFO - In MainBlockInfo(offset=132, size=140, extra_data=b'', block_type=13, min_version=0, current_version=1) only read 44 bytes
+2025-09-17 11:22:15,502 - src.processors.claude_vision_ocr - INFO - Processing PDF with Claude Vision OCR: /var/folders/fz/lk73lw852qvdhclc25d__0gc0000gp/T/notebook_text_extractor_1yf86o59/page_016.pdf
+2025-09-17 11:22:21,206 - httpx - INFO - HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2025-09-17 11:22:21,228 - src.processors.claude_vision_ocr - INFO - Claude Vision OCR completed: 1 pages processed
+2025-09-17 11:22:21,247 - src.processors.notebook_text_extractor - INFO - Stored 1 text regions for notebook Test for integration
+2025-09-17 11:22:21,247 - src.processors.notebook_text_extractor - INFO -   ✓ Completed: 1 text regions from 1 pages
+2025-09-17 11:22:21,248 - src.processors.notebook_text_extractor - INFO -   ✓ Extracted 5 todo items
+2025-09-17 11:22:21,255 - src.processors.notebook_text_extractor - INFO - Processing 5 todos with intelligent deduplication...
+2025-09-17 11:22:21,256 - src.processors.notebook_text_extractor - INFO - ✅ Todo processing complete: 5 new, 0 updated, 0 skipped (similar)
+2025-09-17 11:22:21,300 - src.processors.notebook_text_extractor - INFO - ✅ Incremental processing complete: 1 pages processed
+2025-09-17 11:22:21,301 - src.core.file_watcher - INFO - 🔄 Processing successful, triggering unified sync for 98afc255-97ee-4416-96db-ac9a16a33109
+2025-09-17 11:22:21,301 - src.core.file_watcher - INFO - 🔍 DEBUG: Direct processing - result.processed_page_numbers = {16}
+2025-09-17 11:22:21,301 - src.core.file_watcher - INFO - 🔍 DEBUG: _sync_notebook_unified called with changed_pages = {16}
+2025-09-17 11:22:21,307 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 11:22:21,311 - src.integrations.notion_unified_sync - INFO - 🔍 DEBUG: changed_pages = {16} (type: <class 'set'>)
+2025-09-17 11:22:23,101 - httpx - INFO - HTTP Request: POST https://api.notion.com/v1/databases/255a6c5dacd08083bc4fd57c6333b52b/query "HTTP/1.1 200 OK"
+2025-09-17 11:22:23,104 - src.integrations.notion_unified_sync - INFO - 🔄 Calling update_existing_page with changed_pages: {16}
+2025-09-17 11:22:24,080 - httpx - INFO - HTTP Request: PATCH https://api.notion.com/v1/pages/268a6c5d-acd0-811c-b27e-d94f5bbabd25 "HTTP/1.1 200 OK"
+2025-09-17 11:22:24,084 - src.integrations.notion_sync - INFO - 📝 Incremental update for Test for integration - 1 pages changed
+2025-09-17 11:22:25,441 - httpx - INFO - HTTP Request: GET https://api.notion.com/v1/blocks/268a6c5d-acd0-811c-b27e-d94f5bbabd25/children "HTTP/1.1 200 OK"
+2025-09-17 11:22:29,214 - httpx - INFO - HTTP Request: PATCH https://api.notion.com/v1/blocks/268a6c5d-acd0-811c-b27e-d94f5bbabd25/children "HTTP/1.1 200 OK"
+2025-09-17 11:22:29,225 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 11:22:29,238 - src.integrations.notion_sync - INFO - ✅ Updated 1 changed pages in Notion (newest first)
+2025-09-17 11:22:29,239 - src.integrations.notion_sync - INFO - ✅ Updated Notion page for notebook: Test for integration
+2025-09-17 11:22:29,239 - src.integrations.notion_unified_sync - INFO - ✅ Updated Notion page for notebook: Test for integration
+2025-09-17 11:22:29,242 - src.core.file_watcher - INFO - ✅ Successfully synced notebook via unified sync: Test for integration
+2025-09-17 11:22:29,250 - src.core.database - INFO - Database manager initialized: /Users/gabriele/Documents/Development/remarkable-integration/data/remarkable_pipeline.db
+2025-09-17 11:22:29,252 - src.core.file_watcher - INFO - 🔄 Processing notebook change: 98afc255-97ee-4416-96db-ac9a16a33109
+2025-09-17 11:22:29,252 - src.core.file_watcher - INFO - 🔍 Processing check for 98afc255-97ee-4416-96db-ac9a16a33109: locks=['639b1387-8b92-4e24-b3f7-57f8c2704933', 'dbf546ea-3543-422b-b8ef-2586b483cc3e', '7c2cf4a0-1051-434d-a2d5-be3c55b69c12', '09eb43d8-5dd7-499d-9fbd-72226a5fcf2b', '01eb6571-8933-4b1d-818f-34466a5d21c4', 'e14f1f09-a033-455f-88b2-88e3b4352c9d', '3a8f34e7-24a8-484b-8f83-f6e122b184cb', '2d2a066e-0046-4c26-a962-0fdd0d79ab7f', '9d1b89be-25a0-4a84-a8a0-c71fe8768812', 'ae74caa1-c2fc-4ee8-927b-97e0e74c277e', '5df1f706-47f2-48ac-a585-c7ec83450c51', '138f7e3e-9584-4cb9-9762-f268226ff119', '8bc19ba5-efb0-4e42-9d7a-e6a437d8b57d', '3953e421-dd2b-42fe-b915-ef42e777e184', '834a0839-af55-4c1d-9183-4ee5608508c7', '3bd6ed13-f6c1-4e5d-8756-27304ab58e19', '98afc255-97ee-4416-96db-ac9a16a33109']
+2025-09-17 11:22:29,252 - src.core.file_watcher - INFO - 🔍 Last processed 14.7s ago
+2025-09-17 11:22:29,252 - src.core.file_watcher - INFO - 🔍 Marking 98afc255-97ee-4416-96db-ac9a16a33109 as processing at 1758100949.2526872
+2025-09-17 11:22:29,274 - src.processors.notebook_text_extractor - INFO - Processing notebook: Test for integration
+2025-09-17 11:22:29,275 - src.processors.notebook_text_extractor - INFO - Processing notebook: Test for integration
+2025-09-17 11:22:29,277 - src.processors.notebook_text_extractor - INFO -   Found 16 pages
+2025-09-17 11:22:29,278 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 1/16 (UUID: ecb27edd-6ad6-4530-9ad3-7c364c76fbb2)
+2025-09-17 11:22:29,282 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 1: Already processed, skipping
+2025-09-17 11:22:29,282 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 2/16 (UUID: ebdea0cd-e6d4-412a-9d43-5b01b0ad4ae6)
+2025-09-17 11:22:29,285 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 2: Already processed, skipping
+2025-09-17 11:22:29,285 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 3/16 (UUID: 59aec416-cadd-43fa-a7ec-79e755e47d5d)
+2025-09-17 11:22:29,287 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 3: Already processed, skipping
+2025-09-17 11:22:29,287 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 4/16 (UUID: d8159b55-f49f-4a0c-8db0-8f4ab7f6487b)
+2025-09-17 11:22:29,289 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 4: Already processed, skipping
+2025-09-17 11:22:29,289 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 5/16 (UUID: f1f46146-fdbe-434d-90cc-06ad7f07bee2)
+2025-09-17 11:22:29,291 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 5: Already processed, skipping
+2025-09-17 11:22:29,291 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 6/16 (UUID: b098a9b8-e860-4de1-a323-44c6007fb4f1)
+2025-09-17 11:22:29,292 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 6: Already processed, skipping
+2025-09-17 11:22:29,293 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 7/16 (UUID: 2c88614f-ef29-41ae-9baf-4a07872aa8c0)
+2025-09-17 11:22:29,295 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 7: Already processed, skipping
+2025-09-17 11:22:29,296 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 8/16 (UUID: 307a99ec-412f-4468-86a6-181c6b67c9f3)
+2025-09-17 11:22:29,297 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 8: Already processed, skipping
+2025-09-17 11:22:29,297 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 9/16 (UUID: 202fdf49-35d6-4bd5-819b-bcdd962816f5)
+2025-09-17 11:22:29,299 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 9: Already processed, skipping
+2025-09-17 11:22:29,299 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 10/16 (UUID: c223685b-7eef-419b-9b12-cb0fdb6b3c12)
+2025-09-17 11:22:29,301 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 10: Already processed, skipping
+2025-09-17 11:22:29,301 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 11/16 (UUID: 3a8795bd-fcbf-459b-af41-005809db17af)
+2025-09-17 11:22:29,302 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 11: Already processed, skipping
+2025-09-17 11:22:29,302 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 12/16 (UUID: 01db6be2-646c-4f93-9cec-91fde890ed61)
+2025-09-17 11:22:29,304 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 12: Already processed, skipping
+2025-09-17 11:22:29,304 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 13/16 (UUID: d862e847-2975-415c-8554-9371b70f454d)
+2025-09-17 11:22:29,305 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 13: Already processed, skipping
+2025-09-17 11:22:29,305 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 14/16 (UUID: 4067155f-a6cf-4e23-9043-25be676f7001)
+2025-09-17 11:22:29,306 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 14: Already processed, skipping
+2025-09-17 11:22:29,306 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 15/16 (UUID: 83c50da8-3fb4-453c-a2bc-c6c152ce1ce5)
+2025-09-17 11:22:29,307 - src.processors.notebook_text_extractor - INFO -     ⏩ Page 15: Already processed, skipping
+2025-09-17 11:22:29,307 - src.processors.notebook_text_extractor - INFO -   🔍 Checking page 16/16 (UUID: 5b826235-fc6d-4754-be63-88ee94622afb)
+2025-09-17 11:22:29,308 - src.processors.notebook_text_extractor - INFO -     🔄 Page 16: Processing (new or changed)
+2025-09-17 11:22:29,311 - rmscene.tagged_block_reader - WARNING - Some data has not been read. The data may have been written using a newer format than this reader supports.
+2025-09-17 11:22:29,311 - rmscene.tagged_block_reader - INFO - In MainBlockInfo(offset=132, size=140, extra_data=b'', block_type=13, min_version=0, current_version=1) only read 44 bytes
+2025-09-17 11:22:29,379 - src.processors.claude_vision_ocr - INFO - Processing PDF with Claude Vision OCR: /var/folders/fz/lk73lw852qvdhclc25d__0gc0000gp/T/notebook_text_extractor_7s8e7_as/page_016.pdf

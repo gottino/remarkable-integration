@@ -553,23 +553,23 @@ class EnhancedHighlightExtractorV3:
         try:
             cursor = self.db_connection.cursor()
             
-            # Create highlights table with OCR correction fields
+            # Use existing enhanced_highlights table (compatible with v1/v2)
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS enhanced_highlights_v3 (
+                CREATE TABLE IF NOT EXISTS enhanced_highlights (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     notebook_uuid TEXT NOT NULL,
                     page_uuid TEXT,
                     source_file TEXT NOT NULL,
                     title TEXT NOT NULL,
-                    text TEXT NOT NULL,
                     original_text TEXT NOT NULL,
+                    corrected_text TEXT NOT NULL,
                     page_number TEXT,
                     file_name TEXT,
+                    passage_id INTEGER,
                     confidence REAL,
-                    correction_applied BOOLEAN,
+                    match_score REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(notebook_uuid, text, page_number) ON CONFLICT IGNORE
+                    UNIQUE(notebook_uuid, corrected_text, page_number) ON CONFLICT IGNORE
                 )
             ''')
             
@@ -578,7 +578,7 @@ class EnhancedHighlightExtractorV3:
             notebook_uuid = doc_info.content_id
             
             # Clear any existing highlights for this source file
-            cursor.execute('DELETE FROM enhanced_highlights_v3 WHERE source_file = ?', (source_file,))
+            cursor.execute('DELETE FROM enhanced_highlights WHERE source_file = ?', (source_file,))
             
             # Insert highlights
             inserted_count = 0
@@ -586,21 +586,25 @@ class EnhancedHighlightExtractorV3:
                 # Extract page UUID from file_name (remove .rm extension)
                 page_uuid = Path(highlight.file_name).stem if highlight.file_name else None
                 
+                # Map v3 fields to existing enhanced_highlights schema
+                # passage_id: set to 0 for v3 (we don't do EPUB passage merging)
+                # match_score: set to 1.0 for v3 (we use dictionary corrections, not fuzzy matching)
                 cursor.execute('''
-                    INSERT INTO enhanced_highlights_v3 
-                    (notebook_uuid, page_uuid, source_file, title, text, original_text, page_number, file_name, confidence, correction_applied)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO enhanced_highlights
+                    (notebook_uuid, page_uuid, source_file, title, original_text, corrected_text, page_number, file_name, passage_id, confidence, match_score)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     notebook_uuid,
                     page_uuid,
                     source_file,
                     highlight.title,
-                    highlight.text,
-                    highlight.original_text,
+                    highlight.original_text or highlight.text,  # original_text (before OCR correction)
+                    highlight.text,                             # corrected_text (after OCR correction)
                     highlight.page_number,
                     highlight.file_name,
+                    0,                                          # passage_id (not used in v3)
                     highlight.confidence,
-                    highlight.correction_applied
+                    1.0                                         # match_score (always 1.0 for dictionary-based)
                 ))
                 inserted_count += 1
             
@@ -714,4 +718,4 @@ if __name__ == "__main__":
         
         print(f"\n📊 Check results in database:")
         print(f"   sqlite3 enhanced_highlights_v3.db")
-        print(f"   SELECT page_number, original_text, text, correction_applied FROM enhanced_highlights_v3;")
+        print(f"   SELECT page_number, original_text, corrected_text FROM enhanced_highlights;")

@@ -890,13 +890,27 @@ class NotebookTextExtractor:
             return False  # If check fails, process the page
     
     def _process_single_page(
-        self, 
-        rm_file: Path, 
-        page_uuid: str, 
-        page_number: int, 
+        self,
+        rm_file: Path,
+        page_uuid: str,
+        page_number: int,
         temp_dir: Path
     ) -> Optional[NotebookPage]:
         """Process a single page: .rm → SVG → PDF → OCR."""
+
+        # DEBUG: Force OCR failure for testing - set DEBUG_FORCE_OCR_FAIL_PAGES to list of page numbers
+        # Example: export DEBUG_FORCE_OCR_FAIL_PAGES="29,30" to force failures on pages 29 and 30
+        import os
+        debug_fail_pages = os.environ.get('DEBUG_FORCE_OCR_FAIL_PAGES', '')
+        if debug_fail_pages:
+            try:
+                fail_pages = [int(p.strip()) for p in debug_fail_pages.split(',') if p.strip().isdigit()]
+                if page_number in fail_pages:
+                    logger.warning(f"🔍 DEBUG: Forcing OCR failure for page {page_number} (DEBUG_FORCE_OCR_FAIL_PAGES={debug_fail_pages})")
+                    return None
+            except Exception as e:
+                logger.debug(f"Error parsing DEBUG_FORCE_OCR_FAIL_PAGES: {e}")
+
         try:
             # Convert .rm to SVG using rm_parser (supports both v5 and v6)
             svg_file = temp_dir / f"page_{page_number:03d}.svg"
@@ -921,11 +935,19 @@ class NotebookTextExtractor:
             
             # Perform OCR on PDF
             ocr_result = self.ocr_engine.process_file(str(pdf_file))
-            
+
+            # DEBUG: Log OCR result details
+            logger.info(f"🔍 DEBUG: Page {page_number} OCR result - success: {ocr_result.success}, results count: {len(ocr_result.ocr_results) if hasattr(ocr_result, 'ocr_results') and ocr_result.ocr_results else 0}")
+
             if not ocr_result.success:
                 logger.error(f"OCR failed for page {page_number}: {ocr_result.error_message}")
                 return None
-            
+
+            # Check if OCR results are empty (successful call but no content extracted)
+            if not ocr_result.ocr_results or len(ocr_result.ocr_results) == 0:
+                logger.warning(f"OCR succeeded for page {page_number} but no text regions found - treating as failed")
+                return None
+
             return NotebookPage(
                 page_uuid=page_uuid,
                 page_number=page_number,
@@ -1176,18 +1198,51 @@ class NotebookTextExtractor:
             if self.db_manager:  # Close the connection if we created it
                 db_conn.close()
     
+    def _refresh_single_notebook_metadata(self, notebook_uuid: str, metadata: dict) -> None:
+        """Refresh metadata for a single notebook in the database."""
+        if not self.db_manager:
+            logger.debug("No database manager available for single notebook metadata refresh")
+            return
+
+        try:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Update the specific notebook's metadata in database
+                cursor.execute('''
+                    UPDATE notebook_metadata
+                    SET last_modified = ?, last_opened = ?, last_opened_page = ?
+                    WHERE notebook_uuid = ?
+                ''', (
+                    metadata.get('lastModified'),
+                    metadata.get('lastOpened'),
+                    metadata.get('lastOpenedPage'),
+                    notebook_uuid
+                ))
+
+                if cursor.rowcount > 0:
+                    logger.info(f"✅ Updated metadata for notebook {notebook_uuid}: last_opened={metadata.get('lastOpened')}")
+                else:
+                    logger.debug(f"No metadata record found to update for notebook {notebook_uuid}")
+
+        except Exception as e:
+            logger.warning(f"Failed to refresh single notebook metadata: {e}")
+
     def process_notebook_incremental(self, notebook_uuid: str, force_reprocess: bool = False) -> NotebookProcessingResult:
         """Process notebook with incremental updates."""
         notebook_name = "Unknown Notebook"  # Initialize default value
         try:
-            # Metadata is refreshed globally at startup, no need to refresh per-notebook
+            # Refresh metadata for this specific notebook from source file
             
-            # Find the notebook directory
-            notebook_dir = None
-            for root, dirs, files in os.walk(self.data_directory):
-                if notebook_uuid in dirs:
-                    notebook_dir = os.path.join(root, notebook_uuid)
-                    break
+            # Find the notebook directory (optimized - check direct path first)
+            notebook_dir = os.path.join(self.data_directory, notebook_uuid)
+            if not os.path.exists(notebook_dir):
+                # Fallback: search through directory structure (slower)
+                notebook_dir = None
+                for root, dirs, files in os.walk(self.data_directory):
+                    if notebook_uuid in dirs:
+                        notebook_dir = os.path.join(root, notebook_uuid)
+                        break
             
             if not notebook_dir:
                 return NotebookProcessingResult(
@@ -1205,6 +1260,9 @@ class NotebookTextExtractor:
                     with open(metadata_file, 'r', encoding='utf-8') as f:
                         metadata = json.load(f)
                         notebook_name = metadata.get('visibleName', 'Unknown Notebook')
+
+                    # Store metadata for later update (after sync decisions are made)
+                    self._pending_metadata_update = (notebook_uuid, metadata)
                 except:
                     notebook_name = "Unknown Notebook"
             
@@ -1274,11 +1332,19 @@ class NotebookTextExtractor:
                 # Track which pages were processed (for return value)
                 if hasattr(result, 'pages') and result.pages:
                     notebook_result.processed_page_numbers = {page.page_number for page in result.pages}
+                    logger.info(f"🔍 DEBUG: result.pages contains {len(result.pages)} pages: {[p.page_number for p in result.pages]}")
                 else:
                     notebook_result.processed_page_numbers = set()
-                    
+                    logger.info(f"🔍 DEBUG: result.pages is empty or missing")
+
                 logger.info(f"✅ Incremental processing complete: {len(notebook_result.processed_page_numbers)} pages processed")
-                
+
+                # Update metadata after processing is complete (to avoid affecting sync hash calculations)
+                if hasattr(self, '_pending_metadata_update'):
+                    notebook_uuid_meta, metadata = self._pending_metadata_update
+                    self._refresh_single_notebook_metadata(notebook_uuid_meta, metadata)
+                    delattr(self, '_pending_metadata_update')
+
                 return notebook_result
             else:
                 return NotebookProcessingResult(

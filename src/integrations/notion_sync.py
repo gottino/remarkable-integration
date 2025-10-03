@@ -534,7 +534,7 @@ class NotionNotebookSync:
         confidence_text = f" ({confidence_emoji} {page.confidence:.1f})" if page.confidence > 0 else ""
         
         # Use markdown converter to create properly formatted blocks
-        children = self.markdown_converter.text_to_notion_blocks(page.text, max_blocks=20)
+        children = self.markdown_converter.text_to_notion_blocks(page.text, max_blocks=100)
         
         # Create the toggle block
         return {
