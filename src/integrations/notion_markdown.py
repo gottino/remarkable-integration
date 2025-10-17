@@ -115,8 +115,8 @@ class MarkdownToNotionConverter:
                 })
                 continue
             
-            # Check for bullet points
-            bullet_match = re.match(r'^(\s*)-\s+(.+)$', line)
+            # Check for bullet points (support both - and * for markdown compatibility)
+            bullet_match = re.match(r'^(\s*)[-*]\s+(.+)$', line)
             if bullet_match:
                 if current_list_type != 'bullet':
                     # Flush any pending non-bullet list items

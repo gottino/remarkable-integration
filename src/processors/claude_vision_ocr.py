@@ -46,6 +46,9 @@ from .tesseract_ocr_engine import BoundingBox, OCRResult, ProcessingResult
 from ..core.events import get_event_bus, EventType
 from ..core.database import DatabaseManager
 
+# Configuration
+from ..core.config import Config
+
 # API key management
 from ..utils.api_keys import get_anthropic_api_key
 
@@ -133,18 +136,19 @@ class ClaudeVisionOCREngine:
     """OCR engine using Claude's vision capabilities for handwritten text."""
     
     def __init__(
-        self, 
+        self,
         db_connection: Optional[sqlite3.Connection] = None,
         api_key: Optional[str] = None,
         model: str = "claude-3-5-sonnet-20241022",
         confidence_threshold: float = 0.8,
         rate_limit_requests: int = 30,
         rate_limit_input_tokens: int = 25000,
-        rate_limit_output_tokens: int = 5000
+        rate_limit_output_tokens: int = 5000,
+        config: Optional[Config] = None
     ):
         """
         Initialize Claude Vision OCR engine.
-        
+
         Args:
             db_connection: Optional database connection for storing results
             api_key: Anthropic API key (or set ANTHROPIC_API_KEY env var)
@@ -153,11 +157,13 @@ class ClaudeVisionOCREngine:
             rate_limit_requests: Max requests per minute (default: 30 for conservative limit)
             rate_limit_input_tokens: Max input tokens per minute (default: 25,000)
             rate_limit_output_tokens: Max output tokens per minute (default: 5,000)
+            config: Optional Config instance for loading custom prompts
         """
         self.processor_type = "claude_vision_ocr_engine"
         self.db_connection = db_connection
         self.model = model
         self.confidence_threshold = confidence_threshold
+        self.config = config or Config()
         
         # Initialize rate limiter
         self.rate_limiter = ClaudeRateLimiter(
@@ -209,16 +215,52 @@ class ClaudeVisionOCREngine:
             'max_size': (1568, 1568),  # Claude's max image size
             'quality': 95,
         }
-        
-        # OCR prompt for handwritten text with markdown and date extraction
-        self.ocr_prompt = """Please transcribe all handwritten text from this image in Markdown format.
+
+        # Load OCR prompt from config file or use default
+        self.ocr_prompt = self._load_prompt()
+
+        logger.info(f"Claude Vision OCR Engine initialized (available: {self.is_available()})")
+
+    def _load_prompt(self) -> str:
+        """Load OCR prompt from config file with fallback to default."""
+        # Try to load from config file
+        try:
+            prompt_file = self.config.get('processing.ocr.claude_prompt_file')
+            if prompt_file:
+                prompt_path = Path(prompt_file)
+
+                # Make relative paths relative to project root
+                if not prompt_path.is_absolute():
+                    # Get project root (3 levels up from this file: src/processors/ -> src/ -> root/)
+                    project_root = Path(__file__).parent.parent.parent
+                    prompt_path = project_root / prompt_file
+
+                # Try to read the prompt file
+                if prompt_path.exists():
+                    prompt_content = prompt_path.read_text(encoding='utf-8')
+                    logger.info(f"✓ Loaded Claude OCR prompt from: {prompt_path}")
+                    return prompt_content
+                else:
+                    logger.warning(f"Prompt file not found: {prompt_path}, using default prompt")
+            else:
+                logger.debug("No claude_prompt_file configured, using default prompt")
+        except Exception as e:
+            logger.warning(f"Error loading prompt file: {e}, using default prompt")
+
+        # Fall back to default hardcoded prompt
+        logger.info("Using default Claude OCR prompt")
+        return self._default_prompt()
+
+    def _default_prompt(self) -> str:
+        """Return the default OCR prompt."""
+        return """Please transcribe all handwritten text from this image in Markdown format.
 
 Instructions:
 - Extract ALL visible handwritten text, including notes, arrows, symbols, and annotations
 - Format the output as clean Markdown with proper structure
 - Use ## for main headings, ### for subheadings
 - For arrows, use → ← ↑ ↓ symbols
-- For bullet points, use proper Markdown bullets (- or *)
+- For bullet points, use - (dash) for bullets, NOT asterisks
 - For checkboxes, use - [ ] for empty and - [x] for checked
 - Use **bold** for emphasis where appropriate
 - Use `code` for any technical terms or special notation
@@ -237,9 +279,7 @@ Output Format:
 2. If no date: Just the content in Markdown format
 
 Return only the formatted Markdown text, no explanations."""
-        
-        logger.info(f"Claude Vision OCR Engine initialized (available: {self.is_available()})")
-    
+
     def is_available(self) -> bool:
         """Check if Claude Vision OCR is available."""
         return ANTHROPIC_AVAILABLE and PDF2IMAGE_AVAILABLE and self.client is not None

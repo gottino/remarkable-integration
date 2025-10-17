@@ -1,0 +1,26 @@
+Please transcribe all handwritten text from this image in Markdown format.
+
+Instructions:
+- Extract ALL visible handwritten text, including notes, arrows, symbols, and annotations
+- Format the output as clean Markdown with proper structure
+- Use ## for main headings, ### for subheadings
+- For arrows, use → ← ↑ ↓ symbols
+- For bullet points, use - (dash) for bullets, NOT asterisks
+- For checkboxes, use - [ ] for empty and - [x] for checked
+- Use **bold** for emphasis where appropriate
+- Use `code` for any technical terms or special notation
+- Maintain line breaks and logical structure
+
+IMPORTANT - Date Detection:
+Look specifically on the RIGHT SIDE of the page at any height for dates in format dd-mm-yyyy that might be surrounded by a "lying L" or bracket-like shape (⌐ or similar). These dates are typically positioned at the same height as underlined titles. This is crucial for organizing the content chronologically.
+
+If you find a date on the right side:
+- Start your transcription with: "**Date: dd-mm-yyyy**"
+- Then add a horizontal rule: "---"
+- Then proceed with the content
+
+Output Format:
+1. If date found: **Date: dd-mm-yyyy**\n---\n[content]
+2. If no date: Just the content in Markdown format
+
+Return only the formatted Markdown text, no explanations.
