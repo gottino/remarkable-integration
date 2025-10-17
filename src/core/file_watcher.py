@@ -575,22 +575,25 @@ class ReMarkableWatcher:
                 # Fetch notebook data from database
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT 
-                        nte.notebook_uuid, nte.notebook_name, nte.page_number, 
+                    SELECT
+                        nte.notebook_uuid, nte.notebook_name, nte.page_number,
                         nte.text, nte.confidence, nte.page_uuid,
                         nm.full_path, nm.last_modified, nm.last_opened
                     FROM notebook_text_extractions nte
                     LEFT JOIN notebook_metadata nm ON nte.notebook_uuid = nm.notebook_uuid
-                    WHERE nte.notebook_uuid = ? 
-                        AND nte.text IS NOT NULL AND length(nte.text) > 0
+                    WHERE nte.notebook_uuid = ?
+                        AND nte.text IS NOT NULL
+                        AND length(nte.text) > 0
+                        AND nte.text NOT LIKE '%This appears to be a blank%'
+                        AND nte.text NOT LIKE '%completely empty page%'
                     ORDER BY nte.page_number
                 ''', (notebook_uuid,))
-                
+
                 rows = cursor.fetchall()
                 if not rows:
                     logger.info(f"No text content found for notebook: {notebook_name}")
                     return False
-                
+
                 logger.debug(f"Found {len(rows)} text rows for notebook {notebook_name}")
 
                 # DEBUGGING: Log what we fetched from database

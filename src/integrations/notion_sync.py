@@ -471,21 +471,41 @@ class NotionNotebookSync:
         
         # Create new blocks for changed pages in reverse order (newest first)
         changed_pages_list = [page for page in notebook.pages if page.page_number in changed_pages]
-        changed_pages_sorted = sorted(changed_pages_list, key=lambda p: p.page_number, reverse=True)
-        
+
+        # Filter out blank/placeholder pages to prevent syncing empty content
+        valid_pages = []
+        skipped_pages = []
+        for page in changed_pages_list:
+            if not page.text or len(page.text.strip()) == 0:
+                # Skip truly empty pages
+                skipped_pages.append(page.page_number)
+                logger.warning(f"⚠️ Skipping page {page.page_number} with no content")
+            elif 'This appears to be a blank' in page.text or 'completely empty page' in page.text:
+                # Skip Claude's blank page placeholders
+                skipped_pages.append(page.page_number)
+                logger.warning(f"⚠️ Skipping blank placeholder page {page.page_number} from sync")
+            else:
+                # Sync all pages with actual content, regardless of length
+                valid_pages.append(page)
+
+        if skipped_pages:
+            logger.info(f"ℹ️ Skipped {len(skipped_pages)} blank/placeholder pages: {skipped_pages}")
+
+        changed_pages_sorted = sorted(valid_pages, key=lambda p: p.page_number, reverse=True)
+
         # Find insertion point (after header blocks, before existing page blocks)
         insertion_point = len(header_blocks)  # Insert after header/summary/divider
-        
+
         # Insert new pages one by one in reverse order (highest page number first)
         for page in changed_pages_sorted:
             page_toggle = self._create_page_toggle_block(page)
             # Insert at the same position so newest pages appear first
             result = self.client.blocks.children.append(
-                block_id=page_id, 
+                block_id=page_id,
                 children=[page_toggle],
                 after=header_blocks[-1]["id"] if header_blocks else None
             )
-            
+
             # Capture the block ID for linking
             if result.get("results") and len(result["results"]) > 0:
                 block_id = result["results"][0]["id"]
@@ -493,7 +513,7 @@ class NotionNotebookSync:
                 logger.debug(f"📝 Inserted page {page.page_number} with block ID {block_id}")
             else:
                 logger.debug(f"📝 Inserted page {page.page_number} at top of page list")
-        
+
         if changed_pages_sorted:
             logger.info(f"✅ Updated {len(changed_pages_sorted)} changed pages in Notion (newest first)")
     
