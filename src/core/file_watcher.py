@@ -604,6 +604,42 @@ class ReMarkableWatcher:
                 if len(rows) > 3:
                     logger.info(f"   ... and {len(rows) - 3} more pages")
 
+                # Find pages that don't have sync records (need syncing)
+                # Separate newly processed pages from backlog for prioritization
+                newly_processed_pages = changed_pages if changed_pages else set()
+
+                # Get all page numbers from DB
+                all_page_numbers = {row[2] for row in rows}  # row[2] is page_number
+
+                # Check which pages have sync records
+                cursor.execute('''
+                    SELECT DISTINCT page_number
+                    FROM page_sync_records
+                    WHERE notebook_uuid = ? AND target_name = 'notion'
+                ''', (notebook_uuid,))
+
+                synced_page_numbers = {row[0] for row in cursor.fetchall()}
+
+                # Pages without sync records need to be synced (backlog)
+                backlog_pages = all_page_numbers - synced_page_numbers - newly_processed_pages
+
+                if backlog_pages:
+                    logger.info(f"📝 Found {len(backlog_pages)} backlog pages without sync records: {sorted(list(backlog_pages))[:10]}{'...' if len(backlog_pages) > 10 else ''}")
+
+                if newly_processed_pages:
+                    logger.info(f"🆕 Found {len(newly_processed_pages)} newly processed pages: {sorted(list(newly_processed_pages))}")
+
+                # Combine: newly processed pages + backlog (will be prioritized in Notion sync)
+                changed_pages = newly_processed_pages.union(backlog_pages)
+
+                logger.info(f"🔄 Total pages to sync: {len(changed_pages)} (new: {len(newly_processed_pages)}, backlog: {len(backlog_pages)})")
+
+                # Store metadata for prioritization in notebook_data
+                sync_metadata = {
+                    'newly_processed': list(newly_processed_pages),
+                    'backlog': list(backlog_pages)
+                }
+
                 # Build notebook data structure
                 pages = []
                 metadata = {}
@@ -646,6 +682,7 @@ class ReMarkableWatcher:
                     'page_count': len(pages),
                     'type': 'notebook',
                     'changed_pages': changed_pages,  # Additional info for incremental sync
+                    'sync_metadata': sync_metadata,  # Priority info for rate limiting
                     'full_path': metadata.get('full_path'),
                     'created_at': datetime.now().isoformat(),
                     'updated_at': datetime.now().isoformat()

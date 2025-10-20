@@ -240,3 +240,6 @@ local_data/
 
 # Concept documents (not for public repo)
 concepts/
+
+# Claude Code rules (personal preferences)
+.clinerules

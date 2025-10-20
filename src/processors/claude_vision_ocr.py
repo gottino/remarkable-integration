@@ -47,7 +47,7 @@ from ..core.events import get_event_bus, EventType
 from ..core.database import DatabaseManager
 
 # Configuration
-from ..core.config import Config
+from ..utils.config import Config
 
 # API key management
 from ..utils.api_keys import get_anthropic_api_key

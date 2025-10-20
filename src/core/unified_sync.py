@@ -73,9 +73,42 @@ class UnifiedSyncManager:
                 
                 for index_sql in indexes:
                     cursor.execute(index_sql)
-                
+
+                # Create page_sync_records table for per-page tracking
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS page_sync_records (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        notebook_uuid TEXT NOT NULL,
+                        page_number INTEGER NOT NULL,
+                        content_hash TEXT NOT NULL,
+                        target_name TEXT NOT NULL,
+                        notion_page_id TEXT,
+                        notion_block_id TEXT,
+                        status TEXT NOT NULL,
+                        error_message TEXT,
+                        retry_count INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        synced_at TIMESTAMP,
+                        UNIQUE(notebook_uuid, page_number, target_name)
+                    )
+                ''')
+
+                # Create indexes for page_sync_records
+                page_indexes = [
+                    'CREATE INDEX IF NOT EXISTS idx_page_sync_notebook ON page_sync_records(notebook_uuid)',
+                    'CREATE INDEX IF NOT EXISTS idx_page_sync_hash ON page_sync_records(content_hash)',
+                    'CREATE INDEX IF NOT EXISTS idx_page_sync_target ON page_sync_records(target_name)',
+                    'CREATE INDEX IF NOT EXISTS idx_page_sync_status ON page_sync_records(status)',
+                    'CREATE INDEX IF NOT EXISTS idx_page_sync_notion_page ON page_sync_records(notion_page_id)',
+                    'CREATE INDEX IF NOT EXISTS idx_page_sync_notion_block ON page_sync_records(notion_block_id)',
+                ]
+
+                for index_sql in page_indexes:
+                    cursor.execute(index_sql)
+
                 conn.commit()
-                self.logger.debug("Unified sync_records table and indexes ensured")
+                self.logger.debug("Unified sync_records and page_sync_records tables with indexes ensured")
         except Exception as e:
             self.logger.error(f"Error ensuring sync records table: {e}")
             raise

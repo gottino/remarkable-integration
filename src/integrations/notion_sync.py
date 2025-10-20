@@ -8,6 +8,7 @@ creating a page for each notebook with content organized by pages in reverse ord
 
 import os
 import logging
+import time
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
@@ -491,14 +492,52 @@ class NotionNotebookSync:
         if skipped_pages:
             logger.info(f"ℹ️ Skipped {len(skipped_pages)} blank/placeholder pages: {skipped_pages}")
 
-        changed_pages_sorted = sorted(valid_pages, key=lambda p: p.page_number, reverse=True)
+        # Prioritize newly processed pages over backlog
+        sync_metadata = notebook.metadata.get('sync_metadata', {}) if hasattr(notebook, 'metadata') and notebook.metadata else {}
+        newly_processed = set(sync_metadata.get('newly_processed', []))
+        backlog = set(sync_metadata.get('backlog', []))
+
+        # Split valid pages into priority groups
+        new_pages = [p for p in valid_pages if p.page_number in newly_processed]
+        backlog_pages = [p for p in valid_pages if p.page_number in backlog]
+
+        # Sort each group by page number (newest first)
+        new_pages_sorted = sorted(new_pages, key=lambda p: p.page_number, reverse=True)
+        backlog_pages_sorted = sorted(backlog_pages, key=lambda p: p.page_number, reverse=True)
+
+        # Apply rate limiting: max pages per sync to avoid Notion API limits
+        MAX_PAGES_PER_SYNC = 50
+        DELAY_BETWEEN_PAGES = 0.35  # ~3 requests/second to stay under Notion's rate limit
+
+        # Prioritize: sync ALL new pages first, then fill remaining slots with backlog
+        changed_pages_sorted = new_pages_sorted.copy()
+        remaining_slots = MAX_PAGES_PER_SYNC - len(new_pages_sorted)
+
+        if remaining_slots > 0 and backlog_pages_sorted:
+            backlog_to_sync = backlog_pages_sorted[:remaining_slots]
+            changed_pages_sorted.extend(backlog_to_sync)
+            logger.info(f"📊 Syncing {len(new_pages_sorted)} new pages + {len(backlog_to_sync)} backlog pages")
+        elif len(new_pages_sorted) > MAX_PAGES_PER_SYNC:
+            logger.warning(f"⚠️ {len(new_pages_sorted)} new pages exceeds limit, syncing first {MAX_PAGES_PER_SYNC}")
+            changed_pages_sorted = new_pages_sorted[:MAX_PAGES_PER_SYNC]
+        else:
+            logger.info(f"📊 Syncing {len(new_pages_sorted)} new pages")
+
+        total_pending = len(new_pages_sorted) + len(backlog_pages_sorted)
+        if total_pending > len(changed_pages_sorted):
+            logger.warning(f"⚠️ {total_pending - len(changed_pages_sorted)} pages remaining for next sync")
 
         # Find insertion point (after header blocks, before existing page blocks)
         insertion_point = len(header_blocks)  # Insert after header/summary/divider
 
         # Insert new pages one by one in reverse order (highest page number first)
-        for page in changed_pages_sorted:
+        for i, page in enumerate(changed_pages_sorted, 1):
             page_toggle = self._create_page_toggle_block(page)
+
+            # Rate limiting: add delay between API calls
+            if i > 1:  # Don't delay before first request
+                time.sleep(DELAY_BETWEEN_PAGES)
+
             # Insert at the same position so newest pages appear first
             result = self.client.blocks.children.append(
                 block_id=page_id,
@@ -510,9 +549,9 @@ class NotionNotebookSync:
             if result.get("results") and len(result["results"]) > 0:
                 block_id = result["results"][0]["id"]
                 self._store_page_block_mapping(notebook.uuid, page.page_number, page_id, block_id, page.text)
-                logger.debug(f"📝 Inserted page {page.page_number} with block ID {block_id}")
+                logger.debug(f"📝 Inserted page {page.page_number} ({i}/{len(changed_pages_sorted)}) with block ID {block_id}")
             else:
-                logger.debug(f"📝 Inserted page {page.page_number} at top of page list")
+                logger.debug(f"📝 Inserted page {page.page_number} ({i}/{len(changed_pages_sorted)}) at top of page list")
 
         if changed_pages_sorted:
             logger.info(f"✅ Updated {len(changed_pages_sorted)} changed pages in Notion (newest first)")
@@ -522,28 +561,40 @@ class NotionNotebookSync:
         try:
             # We need database access - this should be passed in or made available
             from ..core.database import DatabaseManager
+            import hashlib
             db = DatabaseManager('./data/remarkable_pipeline.db')
-            
+
             with db.get_connection() as conn:
                 cursor = conn.cursor()
-                
-                # Store in notion_page_blocks table
+
+                # Store in notion_page_blocks table (legacy)
                 cursor.execute('''
-                    INSERT OR REPLACE INTO notion_page_blocks 
+                    INSERT OR REPLACE INTO notion_page_blocks
                     (notebook_uuid, page_number, notion_page_id, notion_block_id, updated_at)
                     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ''', (notebook_uuid, page_number, notion_page_id, notion_block_id))
-                
-                # Also update notion_page_sync table with the block ID, sync timestamp, and synced content
+
+                # Also update notion_page_sync table with the block ID, sync timestamp, and synced content (legacy)
                 cursor.execute('''
-                    UPDATE notion_page_sync 
+                    UPDATE notion_page_sync
                     SET notion_block_id = ?, last_synced = CURRENT_TIMESTAMP, last_synced_content = ?
                     WHERE notebook_uuid = ? AND page_number = ?
                 ''', (notion_block_id, page_content, notebook_uuid, page_number))
-                
+
+                # NEW: Store in page_sync_records table for per-page tracking
+                if page_content:
+                    content_hash = hashlib.sha256(page_content.encode('utf-8')).hexdigest()
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO page_sync_records
+                        (notebook_uuid, page_number, content_hash, target_name, notion_page_id,
+                         notion_block_id, status, synced_at, updated_at)
+                        VALUES (?, ?, ?, 'notion', ?, ?, 'success', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ''', (notebook_uuid, page_number, content_hash, notion_page_id, notion_block_id))
+                    logger.debug(f"✅ Created page sync record: {notebook_uuid} page {page_number}")
+
                 conn.commit()
                 logger.debug(f"📎 Stored block mapping: {notebook_uuid} page {page_number} -> {notion_block_id}")
-                
+
         except Exception as e:
             logger.warning(f"Failed to store block mapping for {notebook_uuid} page {page_number}: {e}")
     
