@@ -435,7 +435,7 @@ class NotionNotebookSync:
         
         return blocks
     
-    def _update_changed_pages_only(self, page_id: str, notebook: Notebook, changed_pages: set) -> None:
+    def _update_changed_pages_only(self, page_id: str, notebook: Notebook, changed_pages: set, sync_metadata: dict = None) -> None:
         """Update only the blocks for pages that have changed."""
         # Get all current blocks
         blocks_response = self.client.blocks.children.list(block_id=page_id)
@@ -493,7 +493,9 @@ class NotionNotebookSync:
             logger.info(f"ℹ️ Skipped {len(skipped_pages)} blank/placeholder pages: {skipped_pages}")
 
         # Prioritize newly processed pages over backlog
-        sync_metadata = notebook.metadata.get('sync_metadata', {}) if hasattr(notebook, 'metadata') and notebook.metadata else {}
+        # Use passed sync_metadata instead of trying to get from notebook.metadata
+        if sync_metadata is None:
+            sync_metadata = {}
         newly_processed = set(sync_metadata.get('newly_processed', []))
         backlog = set(sync_metadata.get('backlog', []))
 
@@ -530,7 +532,10 @@ class NotionNotebookSync:
         # Find insertion point (after header blocks, before existing page blocks)
         insertion_point = len(header_blocks)  # Insert after header/summary/divider
 
-        # Insert new pages one by one in reverse order (highest page number first)
+        # Track the last inserted block to maintain descending order
+        last_inserted_block_id = header_blocks[-1]["id"] if header_blocks else None
+
+        # Insert new pages one by one in descending order (highest page number first)
         for i, page in enumerate(changed_pages_sorted, 1):
             page_toggle = self._create_page_toggle_block(page)
 
@@ -538,16 +543,17 @@ class NotionNotebookSync:
             if i > 1:  # Don't delay before first request
                 time.sleep(DELAY_BETWEEN_PAGES)
 
-            # Insert at the same position so newest pages appear first
+            # Insert after the last inserted block to maintain descending order
             result = self.client.blocks.children.append(
                 block_id=page_id,
                 children=[page_toggle],
-                after=header_blocks[-1]["id"] if header_blocks else None
+                after=last_inserted_block_id
             )
 
-            # Capture the block ID for linking
+            # Capture the block ID for linking and update anchor for next insertion
             if result.get("results") and len(result["results"]) > 0:
                 block_id = result["results"][0]["id"]
+                last_inserted_block_id = block_id  # Update anchor for next page
                 self._store_page_block_mapping(notebook.uuid, page.page_number, page_id, block_id, page.text)
                 logger.debug(f"📝 Inserted page {page.page_number} ({i}/{len(changed_pages_sorted)}) with block ID {block_id}")
             else:
@@ -627,7 +633,7 @@ class NotionNotebookSync:
             }
         }
     
-    def update_existing_page(self, page_id: str, notebook: Notebook, changed_pages: set = None) -> None:
+    def update_existing_page(self, page_id: str, notebook: Notebook, changed_pages: set = None, sync_metadata: dict = None) -> None:
         """Update an existing Notion page with incremental content changes."""
         try:
             # Update page properties
@@ -699,7 +705,7 @@ class NotionNotebookSync:
             else:
                 # Incremental update - only update changed pages
                 logger.info(f"📝 Incremental update for {notebook.name} - {len(changed_pages)} pages changed")
-                self._update_changed_pages_only(page_id, notebook, changed_pages)
+                self._update_changed_pages_only(page_id, notebook, changed_pages, sync_metadata)
             
             logger.info(f"✅ Updated Notion page for notebook: {notebook.name}")
             

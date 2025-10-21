@@ -132,7 +132,9 @@ class NotionSyncTarget(SyncTarget):
             if existing_page_id:
                 # Update existing page with incremental sync support
                 logger.info(f"🔄 Calling update_existing_page with changed_pages: {changed_pages}")
-                self.notion_client.update_existing_page(existing_page_id, notebook, changed_pages)
+                # Pass sync_metadata for prioritization
+                sync_metadata = notebook_data.get('sync_metadata', {})
+                self.notion_client.update_existing_page(existing_page_id, notebook, changed_pages, sync_metadata)
                 logger.info(f"✅ Updated Notion page for notebook: {notebook.name}")
                 return SyncResult(
                     status=SyncStatus.SUCCESS,
@@ -198,7 +200,9 @@ class NotionSyncTarget(SyncTarget):
                 if notebook:
                     # Update just this page
                     changed_pages = {page_number}
-                    self.notion_client.update_existing_page(existing_page_id, notebook, changed_pages)
+                    # For single page updates, treat as newly processed
+                    sync_metadata = {'newly_processed': [page_number], 'backlog': []}
+                    self.notion_client.update_existing_page(existing_page_id, notebook, changed_pages, sync_metadata)
                     
                     return SyncResult(
                         status=SyncStatus.SUCCESS,
