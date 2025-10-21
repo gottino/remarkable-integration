@@ -40,9 +40,30 @@ remarkable:
 poetry run python -m src.cli.main config check
 ```
 
-#### **Step 4: Start the File Watching System**
+#### **Step 4: Configure Integrations (Optional)**
+
+**For Notion Auto-Sync:**
 ```bash
-# Start the direct file watching system with text extraction
+# Set up Notion integration (see Notion Integration guide for database setup)
+export NOTION_TOKEN="secret_your_token_here"
+export NOTION_DATABASE_ID="your_database_id_here"
+
+# Or use secure key management
+poetry run python -m src.cli.main config api-key set --service notion
+```
+
+**For Readwise Auto-Sync:**
+```bash
+# Set up Readwise integration
+export READWISE_ACCESS_TOKEN="your_token_here"
+
+# Or use secure key management
+poetry run python -m src.cli.main config api-key set --service readwise
+```
+
+#### **Step 5: Start the File Watching System**
+```bash
+# Start the direct file watching system with all integrations
 poetry run python -m src.cli.main watch
 ```
 
@@ -79,7 +100,10 @@ Once started, here's what happens automatically:
 4. **NotebookTextExtractor processes** → Uses incremental updates (only changed pages)
 5. **AI OCR extracts text** → Claude Vision reads your handwriting
 6. **Database stores results** → Searchable text with metadata
-7. **Ready for export/integration** → Notion, Readwise, etc.
+7. **Notion sync triggers automatically** → Syncs changed notebooks to Notion
+8. **Per-page tracking updates** → Individual sync records for each page
+9. **Todo extraction** → Checkboxes synced to Notion with page links
+10. **Readwise sync** → PDF/EPUB highlights synced to Readwise (if configured)
 
 ### ⚡ **Advanced Startup Options**
 
@@ -181,6 +205,7 @@ poetry run python -m src.cli.main text extract \
 - Detects changes immediately when you save notes in reMarkable app
 - Processes files directly from source directory
 - Processes only changed notebooks
+- Automatically syncs to Notion and Readwise
 
 ### ✅ Incremental Updates
 - **Page-level granularity**: Only updates pages that actually changed
@@ -192,6 +217,20 @@ poetry run python -m src.cli.main text extract \
 - Waits for changes to settle before processing
 - Configurable debounce period (default: 5 seconds)
 - Handles rapid successive changes gracefully
+
+### ✅ Notion Integration (Automatic)
+- **Per-page sync tracking**: Individual records for each page
+- **Rate limiting**: 50 pages/sync to respect API limits
+- **Priority syncing**: New pages before backlog
+- **Descending order**: Latest pages appear first
+- **Todo linking**: Extracted checkboxes link to source pages
+- **Metadata refresh**: Automatic updates for path changes
+
+### ✅ Readwise Integration (Automatic)
+- **Highlight sync**: PDF/EPUB annotations sync automatically
+- **Book metadata**: Author, publisher, publication date
+- **Cover images**: Automatically extracted and stored
+- **Deduplication**: Prevents duplicate highlights
 
 ### ✅ Safe Operation
 - Read-only access to original reMarkable app files

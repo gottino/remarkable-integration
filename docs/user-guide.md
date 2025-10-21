@@ -355,6 +355,37 @@ Useful for analysis, reporting, or database import:
 
 ## 🔧 Advanced Usage
 
+### Configurable OCR Prompts (NEW!)
+
+Customize Claude's behavior for domain-specific handwriting:
+
+**Create a custom prompt:**
+```bash
+# Edit the default OCR prompt
+nano config/prompts/claude_ocr_default.txt
+```
+
+**Example custom prompt:**
+```
+You are analyzing a handwritten page from a medical research notebook.
+Pay special attention to:
+- Medical terminology and drug names
+- Dosage amounts and units
+- Patient identifiers (anonymize if present)
+- Experimental protocols and procedures
+
+[Rest of standard prompt...]
+```
+
+**The system uses your custom prompt automatically** when processing notebooks.
+
+**Use cases:**
+- Medical/scientific notation
+- Technical diagrams and equations
+- Foreign language emphasis
+- Domain-specific vocabulary
+- Custom date formats
+
 ### Quality Control
 
 ```bash
@@ -403,16 +434,57 @@ poetry run python -m src.cli.main text extract data/ --output-dir "/path/to/Obsi
 # ![[reMarkable/Meeting Notes.md]]
 ```
 
-### Notion Integration
+### Notion Integration (Automated)
+
+The system includes a complete real-time Notion integration with advanced features:
 
 ```bash
-# Export as Markdown for Notion import
-poetry run python -m src.cli.main text extract data/ --format md --output-dir "notion_import"
+# Start the file watcher with auto-sync to Notion
+poetry run python -m src.cli.main watch
 
-# Import process:
-# 1. In Notion: "Import" → "Markdown"
-# 2. Select all .md files from notion_import/
-# 3. Choose destination page
+# What happens automatically:
+# 1. Detects changes in your reMarkable notebooks
+# 2. Extracts handwritten text using Claude Vision
+# 3. Syncs to Notion with per-page tracking
+# 4. Updates only changed pages (intelligent sync)
+# 5. Syncs extracted todos with page links
+```
+
+**Key Features:**
+- **Per-Page Sync Tracking**: Individual sync records for each page
+- **Rate Limiting**: 50 pages/sync to respect Notion API limits
+- **Priority Syncing**: New pages sync before backlog
+- **Descending Order**: Latest pages appear first
+- **Todo Linking**: Extracted checkboxes link back to source pages
+
+See **[Notion Integration Guide](notion-integration.md)** for complete setup.
+
+### Readwise Integration (NEW!)
+
+Sync your PDF/EPUB highlights directly to Readwise:
+
+```bash
+# Set up Readwise API key
+export READWISE_ACCESS_TOKEN="your-token-here"
+
+# Or use secure key management
+poetry run python -m src.cli.main config api-key set --service readwise
+
+# The file watcher automatically syncs highlights to Readwise
+poetry run python -m src.cli.main watch
+```
+
+**Features:**
+- Automatic highlight sync from PDF/EPUB annotations
+- Book metadata extraction (author, publisher, publication date)
+- Cover image extraction and storage
+- Deduplication to prevent duplicate highlights
+- Batch processing for initial sync
+
+**Manual sync:**
+```bash
+# Sync highlights from specific books
+poetry run python scripts/sync_existing_highlights_to_readwise.py
 ```
 
 ### Version Control

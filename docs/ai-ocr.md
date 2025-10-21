@@ -143,6 +143,75 @@ Meeting with John
 
 ## 🔧 Advanced Features
 
+### Configurable OCR Prompts (NEW!)
+
+Customize Claude's behavior for domain-specific handwriting and notation:
+
+**Default prompt location:**
+```
+config/prompts/claude_ocr_default.txt
+```
+
+**How to customize:**
+```bash
+# Edit the OCR prompt
+nano config/prompts/claude_ocr_default.txt
+
+# The system will use your custom prompt automatically
+poetry run python -m src.cli.main text extract data/ --output-dir "notes"
+```
+
+**Example custom prompt for medical notes:**
+```
+You are analyzing handwritten medical research notes. Please:
+
+1. Pay special attention to:
+   - Medical terminology and drug names (e.g., "acetaminophen", "ibuprofen")
+   - Dosage amounts with units (e.g., "500mg", "2.5ml")
+   - Patient identifiers (anonymize if present)
+   - Lab values and measurements
+
+2. Preserve all formatting:
+   - Arrows (→, ←) for relationships
+   - Checkboxes (□, ☑) for task tracking
+   - Bullet points (•, -, *) for lists
+
+3. Date recognition:
+   - Look for dates in upper right corner
+   - Format: dd-mm-yyyy within bracket shapes (⌐ ┘)
+
+4. Output as clean Markdown with structure preserved.
+```
+
+**Use cases for custom prompts:**
+- **Medical/Scientific**: Terminology, drug names, lab values
+- **Mathematics**: Equations, symbols, proofs
+- **Engineering**: Technical diagrams, formulas, units
+- **Legal**: Case citations, legal terms
+- **Foreign Languages**: Emphasis on specific language
+- **Custom Notation**: Domain-specific symbols
+
+**Tips for effective prompts:**
+- Be specific about terminology to recognize
+- Include examples of common patterns
+- Specify desired output format
+- Mention critical elements to preserve
+
+### Blank Page Filtering
+
+The system automatically filters out blank or placeholder pages:
+
+**What gets filtered:**
+- Truly empty pages (no content)
+- Claude's "This appears to be a blank page" placeholders
+- Pages with "completely empty page" markers
+
+**Benefits:**
+- Cleaner Notion pages
+- Faster sync times
+- No wasted API calls
+- Better organization
+
 ### Multi-Engine Fallback
 
 The system tries OCR engines in order of quality:

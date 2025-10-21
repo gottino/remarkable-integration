@@ -195,13 +195,61 @@ poetry run python -m src.cli.main export -o enhanced_highlights.csv --enhanced
 poetry run python -m src.cli.main export -o book_highlights.csv --title "My Book Title"
 ```
 
+### File Watching System
+```bash
+# Start the complete automated pipeline
+poetry run python -m src.cli.main watch
+
+# What it does automatically:
+# 1. Monitors reMarkable directory for changes
+# 2. Extracts handwritten text using Claude Vision
+# 3. Syncs to Notion with per-page tracking
+# 4. Syncs todos to Notion with page links
+# 5. Syncs PDF/EPUB highlights to Readwise
+
+# Override source directory
+poetry run python -m src.cli.main watch --source-directory "/path/to/remarkable/data"
+
+# Verbose logging
+poetry run python -m src.cli.main --verbose watch
+
+# Control processing behavior
+poetry run python -m src.cli.main watch --sync-on-startup --process-immediately
+```
+
+### Readwise Commands
+```bash
+# Set up Readwise API key
+poetry run python -m src.cli.main config api-key set --service readwise
+
+# Manually sync highlights to Readwise
+poetry run python scripts/sync_existing_highlights_to_readwise.py
+
+# Test Readwise integration
+poetry run python scripts/test_readwise_integration.py
+```
+
+### Notion Commands
+```bash
+# Set up Notion credentials
+export NOTION_TOKEN="secret_your_token"
+export NOTION_DATABASE_ID="your_database_id"
+
+# Or use secure key management
+poetry run python -m src.cli.main config api-key set --service notion
+
+# Backfill page sync records from existing Notion pages
+poetry run python scripts/backfill_page_sync_records.py  # Dry run
+poetry run python scripts/backfill_page_sync_records.py --live  # Actually backfill
+
+# Scan Notion for blank pages
+poetry run python scripts/scan_notion_for_blanks.py
+```
+
 ### Utility Commands
 ```bash
 # Show version information
 poetry run python -m src.cli.main version
-
-# Watch directory for changes (placeholder)
-poetry run python -m src.cli.main watch
 
 # Get help for any command
 poetry run python -m src.cli.main --help
@@ -499,6 +547,7 @@ for row in cursor.fetchall():
 | Command | Description | Type |
 |---------|-------------|------|
 | **`process-all`** | **🆕 Process handwritten notes + highlights together** | **Unified** |
+| **`watch`** | **🔥 Complete automated pipeline (text + Notion + Readwise)** | **Automation** |
 | `text extract` | Extract handwritten text using AI OCR | Text |
 | `text analyze` | Analyze library for cost estimation | Text |
 | `process directory` | Process highlights from PDF/EPUB files | Highlights |
@@ -506,14 +555,23 @@ for row in cursor.fetchall():
 | `config init` | Initialize configuration file | Config |
 | `config check` | Validate configuration | Config |
 | `config show` | Display configuration | Config |
-| `config api-key set` | Set up Anthropic API key | Config |
+| `config api-key set` | Set up API keys (Claude/Notion/Readwise) | Config |
 | `update-paths` | Update notebook metadata and extract EPUB info | Metadata |
 | `database stats` | Show database statistics | Database |
 | `database backup` | Create database backup | Database |
 | `database cleanup` | Clean old data | Database |
 | `export` | Export highlights to CSV | Export |
 | `version` | Show version information | Utility |
-| `watch` | Watch directory for changes | Utility |
+
+### Additional Scripts
+
+| Script | Description | Type |
+|--------|-------------|------|
+| `backfill_page_sync_records.py` | Populate sync records for existing Notion pages | Notion |
+| `sync_existing_highlights_to_readwise.py` | Manual Readwise highlight sync | Readwise |
+| `test_readwise_integration.py` | Test Readwise connection | Readwise |
+| `scan_notion_for_blanks.py` | Find blank pages in Notion | Notion |
+| `reorder_notion_pages.py` | Reorder page blocks in Notion | Notion |
 
 For detailed help on any command:
 ```bash

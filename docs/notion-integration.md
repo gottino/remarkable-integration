@@ -4,14 +4,28 @@ This integration syncs extracted handwritten text from your reMarkable notebooks
 
 ## Features
 
+### Core Sync Features
 - 📓 **One Notion page per notebook**: Each handwritten notebook becomes a Notion page
-- 🔄 **Reverse page order**: Latest notebook pages appear first in Notion  
+- 🔄 **Descending page order**: Latest notebook pages appear first in Notion (Page 468 → 467 → 466...)
 - 🎛️ **Toggle blocks**: Each notebook page becomes a collapsible toggle for easy navigation
-- 🎯 **Smart filtering**: Automatically excludes imported books (PDF/EPUB) and focuses on handwritten content
-- 🔄 **Intelligent incremental sync**: Only updates notebooks that have actually changed
+- 🎯 **Smart filtering**: Automatically excludes imported books (PDF/EPUB) and blank placeholders
 - ✨ **Markdown formatting**: Converts markdown-like text (headings, lists, checkboxes) to proper Notion formatting
 - 📊 **Confidence indicators**: Shows OCR confidence levels for extracted text
 - 🏷️ **Rich metadata**: Includes path, tags, last modified/viewed dates from reMarkable
+
+### Per-Page Sync Tracking (NEW!)
+- 📝 **Granular tracking**: Individual sync records for each page, not just notebooks
+- 🔍 **Gap detection**: Automatically identifies pages missing from Notion
+- 🎯 **Priority syncing**: New pages sync before backlog pages
+- ⚡ **Rate limiting**: 50 pages/sync with 0.35s delays to respect Notion API limits
+- 🔄 **Intelligent updates**: Only syncs pages that have actually changed
+- 📊 **Backfill support**: Can populate sync records for existing Notion pages
+- ✅ **Content hashing**: Detects changes based on actual page content
+
+### Todo Integration
+- ☑️ **Automatic extraction**: Detects checkboxes in handwritten notes
+- 🔗 **Page linking**: Todos link back to source notebook pages in Notion
+- 🔄 **Auto-sync**: Extracted todos automatically sync to Notion database
 
 ## Setup Instructions
 
@@ -177,6 +191,99 @@ By default, the integration:
 - ⏭️ **Excludes**: Notebooks with no readable text
 
 You can add custom exclusion patterns with `--exclude-pattern`.
+
+## Per-Page Sync Tracking System
+
+### How It Works
+
+The system maintains a `page_sync_records` table that tracks every individual page:
+
+```sql
+CREATE TABLE page_sync_records (
+    notebook_uuid TEXT,
+    page_number INTEGER,
+    content_hash TEXT,         -- SHA256 hash of page content
+    notion_page_id TEXT,        -- Parent Notion page
+    notion_block_id TEXT,       -- Specific toggle block for this page
+    status TEXT,                -- 'success', 'pending', 'error'
+    synced_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+```
+
+### Sync Workflow
+
+1. **Change Detection**: File watcher detects notebook changes
+2. **Content Extraction**: OCR extracts text from changed pages
+3. **Hash Calculation**: System calculates SHA256 hash of page content
+4. **Sync Decision**:
+   - Compare with stored hash in `page_sync_records`
+   - If hash matches → Skip (already synced)
+   - If hash different → Sync to Notion
+   - If no record → Add to backlog
+5. **Priority Queue**:
+   - **Newly processed pages**: Sync immediately (high priority)
+   - **Backlog pages**: Fill remaining slots (up to 50 pages/sync)
+6. **Rate Limiting**: 0.35s delay between page insertions
+7. **Record Update**: Update `page_sync_records` with new hash and block ID
+
+### Gap Detection and Backfilling
+
+**Detecting gaps:**
+```bash
+# Find pages without sync records
+SELECT page_number
+FROM notebook_text_extractions
+WHERE notebook_uuid = 'abc123'
+  AND page_number NOT IN (
+    SELECT page_number FROM page_sync_records
+    WHERE notebook_uuid = 'abc123'
+  );
+```
+
+**Backfill existing pages:**
+```bash
+# Backfill sync records by querying Notion
+poetry run python scripts/backfill_page_sync_records.py
+
+# Dry run first to see what would be done
+poetry run python scripts/backfill_page_sync_records.py  # Shows changes
+
+# Actually backfill
+poetry run python scripts/backfill_page_sync_records.py --live
+```
+
+The backfill script:
+1. Queries all synced notebooks from `notion_notebook_sync`
+2. Fetches actual pages from Notion API
+3. Creates `page_sync_records` for pages found in both DB and Notion
+4. Reports pages in DB but not in Notion (need syncing)
+
+### Rate Limiting Details
+
+**Limits:**
+- **Max pages per sync**: 50 pages
+- **Delay between API calls**: 0.35 seconds (~3 requests/second)
+- **Notion API limit**: ~3 requests/second
+
+**Priority handling:**
+- If you have 60 new pages + 100 backlog pages:
+  - Syncs: ALL 60 new pages (over 2 sync cycles)
+  - Then syncs: Backlog pages gradually
+
+**Monitoring:**
+```
+📊 Syncing 15 new pages + 35 backlog pages
+⚠️ 50 pages remaining for next sync
+```
+
+### Benefits
+
+1. **Never lose pages**: Each page tracked individually
+2. **Efficient syncing**: Only changed pages are updated
+3. **Gradual backfill**: Old missing pages sync gradually without hitting rate limits
+4. **Always prioritize new**: Recent work syncs immediately
+5. **Easy debugging**: Query sync status per page
 
 ## Troubleshooting
 
