@@ -7,77 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added - Per-Page Sync Tracking (2025-10-21)
+### Added - Per-Page Sync Tracking (2025-10-20/21)
 - **Per-page sync records**: Individual `page_sync_records` table tracks each page separately
 - **Rate limiting**: 50 pages/sync with 0.35s delays to respect Notion API limits
 - **Priority syncing**: New pages sync before backlog pages
-- **Descending page order**: Latest pages appear first in Notion (468 ’ 467 ’ 466...)
+- **Descending page order**: Latest pages appear first in Notion (468 â†’ 467 â†’ 466...)
 - **Gap detection**: Automatically identifies pages missing from Notion
 - **Backfill script**: `backfill_page_sync_records.py` to populate existing Notion pages
 - **Content hashing**: SHA256 hashes detect actual content changes
 
-### Added - Configurable OCR Prompts (2025-09-13)
+### Added - Configurable OCR Prompts (2025-10-17)
 - **Custom Claude prompts**: Edit `config/prompts/claude_ocr_default.txt` for domain-specific handwriting
 - **Use cases**: Medical terminology, scientific notation, technical diagrams, foreign languages
 - **Bullet conversion fixes**: Improved markdown formatting for bullet points
 
-### Added - Blank Page Filtering (2025-09-13)
+### Added - Blank Page Filtering (2025-10-17)
 - **Automatic filtering**: Skips Claude's "blank page" placeholders
 - **Performance improvement**: Reduces Notion API calls and sync time
 - **Cleaner output**: Only syncs pages with actual content
 
-### Added - Notion Integration Enhancements (2025-09-13)
-- **Last Viewed property**: Maps reMarkable's last_opened to Notion's "Last Viewed"
-- **Metadata refresh**: Automatic updates for path changes and timestamps
-- **Todo linking**: Extracted checkboxes link back to source pages in Notion
-- **Dual processing**: Separate pipelines for notebooks vs PDF/EPUB highlights
-
-### Added - Unified Sync Architecture (2025-09-05)
-- **Event-driven change tracking**: Centralized sync system across all integrations
-- **Content-based detection**: Only syncs when actual content changes
-- **Eliminates duplicate storage**: Single source of truth in database
-- **Intelligent sync decisions**: Logs detailed reasons for sync/skip decisions
-
-### Added - Readwise Integration (2025-08)
+### Added - Readwise Integration (2025-10-03)
 - **Highlight sync**: Automatically syncs PDF/EPUB highlights to Readwise
 - **Book metadata extraction**: Author, publisher, publication date from EPUB files
 - **Cover image extraction**: Automatically downloads and stores book covers
 - **Deduplication**: Prevents duplicate highlights in Readwise
 - **Batch processing**: Initial sync support for existing highlights
-- **Script**: `sync_existing_highlights_to_readwise.py` for manual sync
+- **Dual processing**: Separate pipelines for notebooks vs PDF/EPUB highlights
 
-### Added - Todo Extraction and Sync (2025-08)
+### Added - Last Viewed Property (2025-09-24)
+- **Last Viewed property**: Maps reMarkable's last_opened to Notion's "Last Viewed"
+- **Metadata refresh**: Automatic updates for path changes and timestamps
+
+### Added - Unified Sync Architecture (2025-09-21)
+- **Consolidated sync**: Unified architecture as the only sync method
+- **Event-driven change tracking**: Centralized sync system across all integrations (2025-09-09)
+- **Content-based detection**: Only syncs when actual content changes (2025-09-08)
+- **Eliminates duplicate storage**: Single source of truth in database (2025-09-15)
+- **Intelligent sync decisions**: Logs detailed reasons for sync/skip decisions
+
+### Added - Todo Extraction and Sync (2025-09-18)
 - **Automatic extraction**: Detects checkboxes in handwritten notes
 - **Notion database integration**: Creates dedicated todo database
-- **Page linking**: Todos include links back to source notebook pages
-- **Intelligent deduplication**: Prevents duplicate todos when pages reprocess
+- **Page linking**: Todos include links back to source notebook pages (2025-09-12)
+- **Intelligent deduplication**: Prevents duplicate todos when pages reprocess (2025-09-10)
 - **Automated sync**: File watcher automatically syncs todos to Notion
 
-### Added - File Watching System (2025-07)
+### Added - Notion Integration Enhancements (2025-09-03/12)
+- **Real-time automation**: Complete pipeline with intelligent sync (2025-09-03)
+- **Block ID mapping**: Efficient reverse backfill for existing pages (2025-09-12)
+- **Markdown formatting**: Enhanced formatting with proper block conversion (2025-08-29)
+- **Incremental sync**: Only updates changed notebooks
+
+### Added - Enhanced Metadata System (2025-08-27)
+- **EPUB metadata extraction**: Author, publisher, publication date
+- **Cover image detection**: Multiple strategies (filename, OPF manifest, largest image)
+- **Notebook exclusion**: Configure patterns to skip template notebooks
+- **Document type detection**: Automatic classification (notebook/PDF/EPUB)
+- **Folder hierarchy**: Full path tracking for organization
+
+### Added - File Watching System (2025-08-19)
 - **Real-time monitoring**: Watches reMarkable directory for changes
 - **Direct processing**: No intermediate copying, works directly from source
+- **Two-tier architecture**: Sync + local processing
 - **Auto-sync to Notion**: Automatically syncs changed notebooks
-- **Auto-sync to Readwise**: Automatically syncs PDF/EPUB highlights
 - **Debouncing**: Waits for changes to settle (5-second default)
 - **Incremental updates**: Only processes changed pages
 
-### Added - Enhanced Metadata System (2025-07)
-- **EPUB metadata extraction**: Author, publisher, publication date
-- **Cover image detection**: Multiple strategies (filename, OPF manifest, largest image)
-- **Path-based tagging**: Folder structure becomes Notion tags
-- **Notebook exclusion**: Configure patterns to skip template notebooks
-- **Database query optimization**: Indexed lookups for faster metadata retrieval
+### Added - Smart Todo Extraction (2025-08-17)
+- **Intelligent extraction**: Recognizes checkbox patterns in handwriting
+- **Confidence tracking**: OCR confidence scores for each todo
+- **Date association**: Links todos to page dates
 
-## [1.0.0] - 2025-06
+### Added - Secure API Key Management (2025-08-15)
+- **Keychain integration**: macOS/Windows secure storage
+- **Encrypted file fallback**: Machine-specific encryption
+- **Environment variables**: Alternative configuration method
+- **No plain text**: API keys never stored in config files
+
+## [1.0.0] - 2025-08-15
 
 ### Added - Core OCR System
 - **Claude Vision OCR**: Human-level handwriting recognition
 - **Date annotation detection**: Automatic "lying L" date pattern recognition
 - **Multi-language support**: English, German, French, Spanish, Italian
-- **Symbol recognition**: Arrows (’), bullets ("), checkboxes ()
+- **Symbol recognition**: Arrows (â†’), bullets (â€¢), checkboxes (â˜‘)
 - **Perfect Markdown output**: Preserves structure and formatting
 - **Multiple export formats**: Markdown, JSON, CSV
-- **Multi-engine fallback**: Claude ’ EasyOCR ’ Enhanced Tesseract ’ Tesseract
+- **Multi-engine fallback**: Claude â†’ EasyOCR â†’ Enhanced Tesseract â†’ Tesseract
 
 ### Added - Database System
 - **SQLite integration**: Store extracted text with full metadata
@@ -96,7 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Database sync**: One Notion page per notebook
 - **Toggle blocks**: Each page becomes collapsible section
 - **Markdown formatting**: Headings, lists, checkboxes converted properly
-- **Confidence indicators**: Visual OCR quality indicators (=â=á=4)
+- **Confidence indicators**: Visual OCR quality indicators (ðŸŸ¢ðŸŸ¡ðŸ”´)
 - **Rich metadata**: Path, tags, timestamps from reMarkable
 - **Intelligent incremental sync**: Only updates changed notebooks
 
@@ -140,11 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History Summary
 
-- **1.0.0** (2025-06): Initial release with Claude Vision OCR, basic Notion sync, database system
-- **1.1.0** (2025-07): File watching, EPUB metadata, enhanced Notion integration
-- **1.2.0** (2025-08): Readwise integration, todo extraction, unified sync architecture
-- **1.3.0** (2025-09): Configurable prompts, blank filtering, dual processing
-- **1.4.0** (2025-10): Per-page sync tracking, rate limiting, priority syncing
+- **1.0.0** (2025-08-15): Initial release with Claude Vision OCR, basic Notion sync, database system
+- **1.1.0** (2025-08-19): File watching, EPUB metadata, enhanced Notion integration
+- **1.2.0** (2025-09-08): Todo extraction, unified sync architecture
+- **1.3.0** (2025-10-03): Readwise integration, dual processing
+- **1.4.0** (2025-10-17): Configurable prompts, blank filtering
+- **1.5.0** (2025-10-21): Per-page sync tracking, rate limiting, priority syncing
 
 ## Migration Guides
 
