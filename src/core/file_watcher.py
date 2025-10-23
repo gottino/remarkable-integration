@@ -921,6 +921,13 @@ class ReMarkableWatcher:
                                 if notion_target and hasattr(notion_target, 'refresh_metadata_for_notebooks'):
                                     logger.info(f"🔄 Refreshing metadata for immediate notebook change: {result.notebook_name}")
                                     notion_target.refresh_metadata_for_notebooks({file_uuid})
+
+                                # Also sync content (including backlog pages) for this notebook
+                                logger.info(f"🔄 Syncing content for immediate notebook change: {result.notebook_name}")
+                                await self._sync_notebook_unified(file_uuid, result.notebook_name, result.processed_page_numbers)
+
+                                # Sync any new todos from this notebook
+                                await self._sync_notebook_todos_async(file_uuid, result.notebook_name)
                         else:
                             logger.warning(f"⚠️ Failed to process notebook change: {file_uuid}")
 
