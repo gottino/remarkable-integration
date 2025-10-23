@@ -614,14 +614,11 @@ class ReMarkableWatcher:
 
                 for row in rows:
                     uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened, page_content_hash = row
-                    # Use the stored page_content_hash from database
-                    if page_content_hash:
-                        db_page_hashes[page_num] = page_content_hash
-                    else:
-                        # Fallback: calculate hash if not stored
-                        import hashlib
-                        content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
-                        db_page_hashes[page_num] = content_hash
+                    # Calculate hash from text to match how page_sync_records were backfilled
+                    # NOTE: page_content_hash is based on .rm file, but page_sync_records use text hash
+                    import hashlib
+                    content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+                    db_page_hashes[page_num] = content_hash
 
                 # Check which pages have sync records and compare hashes
                 cursor.execute('''
@@ -726,10 +723,11 @@ class ReMarkableWatcher:
                         'metadata': metadata  # Include full notebook metadata for first-time notebook creation
                     }
 
-                    # Calculate page content hash
+                    # Get page content hash (calculated from text to match page_sync_records)
                     import hashlib
                     page_hash = db_page_hashes.get(page['page_number'])
                     if not page_hash:
+                        # Fallback: calculate from text if not in db_page_hashes
                         page_hash = hashlib.sha256(page['text'].encode('utf-8')).hexdigest()
 
                     sync_item = SyncItem(
