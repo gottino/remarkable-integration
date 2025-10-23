@@ -608,23 +608,46 @@ class ReMarkableWatcher:
                 # Separate newly processed pages from backlog for prioritization
                 newly_processed_pages = changed_pages if changed_pages else set()
 
-                # Get all page numbers from DB
+                # Get all page numbers from DB with their content hashes
                 all_page_numbers = {row[2] for row in rows}  # row[2] is page_number
+                db_page_hashes = {}  # page_number -> content_hash from DB
 
-                # Check which pages have sync records
+                for row in rows:
+                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened = row
+                    # Calculate content hash same way as in notion_sync.py
+                    import hashlib
+                    content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+                    db_page_hashes[page_num] = content_hash
+
+                # Check which pages have sync records and compare hashes
                 cursor.execute('''
-                    SELECT DISTINCT page_number
+                    SELECT page_number, content_hash
                     FROM page_sync_records
                     WHERE notebook_uuid = ? AND target_name = 'notion'
                 ''', (notebook_uuid,))
 
-                synced_page_numbers = {row[0] for row in cursor.fetchall()}
+                sync_records = cursor.fetchall()
+                synced_page_numbers = set()
+                stale_pages = set()  # Pages with outdated content in Notion
+
+                for page_num, sync_hash in sync_records:
+                    synced_page_numbers.add(page_num)
+                    # Check if content hash matches
+                    if page_num in db_page_hashes and db_page_hashes[page_num] != sync_hash:
+                        stale_pages.add(page_num)
+                        logger.debug(f"  Page {page_num} has stale content (DB hash != sync hash)")
 
                 # Pages without sync records need to be synced (backlog)
-                backlog_pages = all_page_numbers - synced_page_numbers - newly_processed_pages
+                missing_pages = all_page_numbers - synced_page_numbers - newly_processed_pages
+
+                # Combine missing pages and stale pages into backlog
+                backlog_pages = missing_pages.union(stale_pages)
 
                 if backlog_pages:
-                    logger.info(f"📝 Found {len(backlog_pages)} backlog pages without sync records: {sorted(list(backlog_pages))[:10]}{'...' if len(backlog_pages) > 10 else ''}")
+                    if stale_pages:
+                        logger.info(f"📝 Found {len(backlog_pages)} backlog pages (missing: {len(missing_pages)}, stale: {len(stale_pages)}): {sorted(list(backlog_pages))[:10]}{'...' if len(backlog_pages) > 10 else ''}")
+                    else:
+                        logger.info(f"📝 Found {len(backlog_pages)} backlog pages without sync records: {sorted(list(backlog_pages))[:10]}{'...' if len(backlog_pages) > 10 else ''}")
 
                 if newly_processed_pages:
                     logger.info(f"🆕 Found {len(newly_processed_pages)} newly processed pages: {sorted(list(newly_processed_pages))}")
