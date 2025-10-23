@@ -578,7 +578,7 @@ class ReMarkableWatcher:
                     SELECT
                         nte.notebook_uuid, nte.notebook_name, nte.page_number,
                         nte.text, nte.confidence, nte.page_uuid,
-                        nm.full_path, nm.last_modified, nm.last_opened
+                        nm.full_path, nm.last_modified, nm.last_opened, nte.page_content_hash
                     FROM notebook_text_extractions nte
                     LEFT JOIN notebook_metadata nm ON nte.notebook_uuid = nm.notebook_uuid
                     WHERE nte.notebook_uuid = ?
@@ -599,7 +599,7 @@ class ReMarkableWatcher:
                 # DEBUGGING: Log what we fetched from database
                 logger.info(f"🔍 DEBUG: Fetched {len(rows)} pages for notebook {notebook_uuid} ({notebook_name})")
                 for i, row in enumerate(rows[:3]):  # Log first 3 pages
-                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened = row
+                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened, page_hash = row
                     logger.info(f"   Page {page_num}: {text[:50]}... (confidence: {confidence})")
                 if len(rows) > 3:
                     logger.info(f"   ... and {len(rows) - 3} more pages")
@@ -613,11 +613,15 @@ class ReMarkableWatcher:
                 db_page_hashes = {}  # page_number -> content_hash from DB
 
                 for row in rows:
-                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened = row
-                    # Calculate content hash same way as in notion_sync.py
-                    import hashlib
-                    content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
-                    db_page_hashes[page_num] = content_hash
+                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened, page_content_hash = row
+                    # Use the stored page_content_hash from database
+                    if page_content_hash:
+                        db_page_hashes[page_num] = page_content_hash
+                    else:
+                        # Fallback: calculate hash if not stored
+                        import hashlib
+                        content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+                        db_page_hashes[page_num] = content_hash
 
                 # Check which pages have sync records and compare hashes
                 cursor.execute('''
@@ -668,8 +672,8 @@ class ReMarkableWatcher:
                 metadata = {}
 
                 for row in rows:
-                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened = row
-                    
+                    uuid, name, page_num, text, confidence, page_uuid, full_path, last_modified, last_opened, page_content_hash = row
+
                     # Add page data
                     pages.append({
                         'page_number': page_num,
