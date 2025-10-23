@@ -187,12 +187,26 @@ class NotionSyncTarget(SyncTarget):
             
             # Find the Notion page for this notebook
             existing_page_id = self.notion_client.find_existing_page(notebook_uuid)
-            
+
             if not existing_page_id:
-                return SyncResult(
-                    status=SyncStatus.SKIPPED,
-                    metadata={'reason': 'Notebook not found in Notion - need full notebook sync first'}
-                )
+                # Notebook doesn't exist yet - create it first
+                self.logger.info(f"📓 Notebook {notebook_uuid} not found in Notion, creating it first")
+                if self.db_manager:
+                    notebook = self._fetch_notebook_from_db(notebook_uuid)
+                    if notebook:
+                        # Create new notebook page in Notion
+                        existing_page_id = self.notion_client.create_notebook_page(notebook)
+                        self.logger.info(f"✅ Created Notion page for notebook: {notebook.name}")
+                    else:
+                        return SyncResult(
+                            status=SyncStatus.FAILED,
+                            error_message="Could not fetch notebook data from DB"
+                        )
+                else:
+                    return SyncResult(
+                        status=SyncStatus.FAILED,
+                        error_message="No database manager available"
+                    )
             
             # Get full notebook data for incremental update
             if self.db_manager:

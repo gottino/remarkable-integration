@@ -700,33 +700,62 @@ class ReMarkableWatcher:
                     if page.get('text', '').strip()
                 ])
 
-                notebook_data = {
-                    'notebook_uuid': notebook_uuid,
-                    'notebook_name': notebook_name,
-                    'title': notebook_name,  # For compatibility with Notion sync
-                    'pages': pages,
-                    'text_content': text_content,  # For hash consistency
-                    'page_count': len(pages),
-                    'type': 'notebook',
-                    'changed_pages': changed_pages,  # Additional info for incremental sync
-                    'sync_metadata': sync_metadata,  # Priority info for rate limiting
-                    'full_path': metadata.get('full_path'),
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat()
-                }
-                
-                sync_item = SyncItem(
-                    item_type=SyncItemType.NOTEBOOK,
-                    item_id=notebook_uuid,
-                    content_hash="",  # Will be calculated by target
-                    data=notebook_data,
-                    source_table="notebook_text_extractions",
-                    created_at=datetime.now(),
-                    updated_at=datetime.now()
-                )
-                
-                # Sync to Notion via unified system
-                result = await self.unified_sync_manager.sync_item_to_target(sync_item, "notion")
+                logger.info(f"🔍 DEBUG: Building page-level sync items for {len(changed_pages)} changed pages")
+
+                # NEW APPROACH: Sync individual pages, not the whole notebook
+                # Create a SyncItem for each page that needs syncing
+                pages_to_sync = [p for p in pages if p['page_number'] in changed_pages]
+
+                if not pages_to_sync:
+                    logger.info(f"ℹ️ No pages need syncing for {notebook_name}")
+                    return True
+
+                logger.info(f"📄 Syncing {len(pages_to_sync)} pages to Notion")
+
+                # Sync each page individually
+                sync_results = []
+                for page in pages_to_sync:
+                    page_data = {
+                        'notebook_uuid': notebook_uuid,
+                        'notebook_name': notebook_name,
+                        'page_number': page['page_number'],
+                        'text': page['text'],
+                        'confidence': page['confidence'],
+                        'page_uuid': page['page_uuid'],
+                        'full_path': metadata.get('full_path'),
+                        'metadata': metadata  # Include full notebook metadata for first-time notebook creation
+                    }
+
+                    # Calculate page content hash
+                    import hashlib
+                    page_hash = db_page_hashes.get(page['page_number'])
+                    if not page_hash:
+                        page_hash = hashlib.sha256(page['text'].encode('utf-8')).hexdigest()
+
+                    sync_item = SyncItem(
+                        item_type=SyncItemType.PAGE_TEXT,
+                        item_id=f"{notebook_uuid}:page:{page['page_number']}",
+                        content_hash=page_hash,
+                        data=page_data,
+                        source_table="notebook_text_extractions",
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+
+                    # Sync page to Notion
+                    result = await self.unified_sync_manager.sync_item_to_target(sync_item, "notion")
+                    sync_results.append((page['page_number'], result))
+
+                # Check results
+                successful = sum(1 for _, r in sync_results if r.status == SyncStatus.SUCCESS)
+                failed = sum(1 for _, r in sync_results if r.status == SyncStatus.FAILED)
+
+                if failed > 0:
+                    logger.warning(f"⚠️ {failed}/{len(sync_results)} pages failed to sync")
+                if successful > 0:
+                    logger.info(f"✅ Successfully synced {successful}/{len(sync_results)} pages to Notion")
+
+                result = sync_results[0][1] if sync_results else None  # Return first result for compatibility
 
                 # Handle different sync results properly
                 if result.status == SyncStatus.SUCCESS:

@@ -177,16 +177,32 @@ class UnifiedSyncManager:
                     item.content_hash = hashlib.md5(str(item.data).encode('utf-8')).hexdigest()
 
             # Check for existing sync record
-            existing_sync = await self.get_sync_record(item.content_hash, target_name)
+            # For PAGE_TEXT items, use page_sync_records table; for others use sync_records
+            if item.item_type == SyncItemType.PAGE_TEXT:
+                existing_sync = await self.get_page_sync_record(item.item_id, target_name)
+            else:
+                existing_sync = await self.get_sync_record(item.content_hash, target_name)
 
             if existing_sync and existing_sync['status'] == 'success':
-                # Already synced successfully
-                self.logger.debug(f"Item already synced to {target_name}: {item.content_hash[:8]}...")
-                return SyncResult(
-                    status=SyncStatus.SKIPPED,
-                    target_id=existing_sync['external_id'],
-                    metadata={'reason': 'already_synced'}
-                )
+                # Check if content has changed (for page syncs)
+                if item.item_type == SyncItemType.PAGE_TEXT:
+                    if existing_sync.get('content_hash') == item.content_hash:
+                        self.logger.debug(f"Page already synced with same content: {item.item_id}")
+                        return SyncResult(
+                            status=SyncStatus.SKIPPED,
+                            target_id=existing_sync.get('notion_page_id', ''),
+                            metadata={'reason': 'already_synced', 'content_unchanged': True}
+                        )
+                    else:
+                        self.logger.info(f"Page content changed, will re-sync: {item.item_id}")
+                else:
+                    # Already synced successfully (non-page items)
+                    self.logger.debug(f"Item already synced to {target_name}: {item.content_hash[:8]}...")
+                    return SyncResult(
+                        status=SyncStatus.SKIPPED,
+                        target_id=existing_sync['external_id'],
+                        metadata={'reason': 'already_synced'}
+                    )
 
             # Log details for debugging
             self.logger.info(f"🔄 Syncing item {item.item_id} to {target_name}")
@@ -273,14 +289,68 @@ class UnifiedSyncManager:
         
         return results
     
+    async def get_page_sync_record(self, item_id: str, target_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get sync record for a specific page from page_sync_records table.
+
+        Args:
+            item_id: Item ID in format "notebook_uuid:page:page_number"
+            target_name: Name of the target
+
+        Returns:
+            Sync record dict or None if not found
+        """
+        try:
+            # Parse item_id to extract notebook_uuid and page_number
+            parts = item_id.split(':page:')
+            if len(parts) != 2:
+                self.logger.error(f"Invalid page item_id format: {item_id}")
+                return None
+
+            notebook_uuid = parts[0]
+            page_number = int(parts[1])
+
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, notebook_uuid, page_number, content_hash, target_name,
+                           notion_page_id, notion_block_id, status, error_message,
+                           retry_count, created_at, updated_at, synced_at
+                    FROM page_sync_records
+                    WHERE notebook_uuid = ? AND page_number = ? AND target_name = ?
+                ''', (notebook_uuid, page_number, target_name))
+
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'notebook_uuid': row[1],
+                        'page_number': row[2],
+                        'content_hash': row[3],
+                        'target_name': row[4],
+                        'notion_page_id': row[5],
+                        'notion_block_id': row[6],
+                        'status': row[7],
+                        'error_message': row[8],
+                        'retry_count': row[9],
+                        'created_at': row[10],
+                        'updated_at': row[11],
+                        'synced_at': row[12]
+                    }
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error getting page sync record: {e}")
+            return None
+
     async def get_sync_record(self, content_hash: str, target_name: str) -> Optional[Dict[str, Any]]:
         """
         Get sync record for a specific content hash and target.
-        
+
         Args:
             content_hash: Hash of the content
             target_name: Name of the target
-            
+
         Returns:
             Sync record dict or None if not found
         """
@@ -289,12 +359,12 @@ class UnifiedSyncManager:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT id, content_hash, target_name, external_id, item_type, status,
-                           item_id, metadata, error_message, retry_count, 
+                           item_id, metadata, error_message, retry_count,
                            created_at, updated_at, synced_at
-                    FROM sync_records 
+                    FROM sync_records
                     WHERE content_hash = ? AND target_name = ?
                 ''', (content_hash, target_name))
-                
+
                 row = cursor.fetchone()
                 if row:
                     return {
@@ -313,17 +383,17 @@ class UnifiedSyncManager:
                         'synced_at': row[12]
                     }
                 return None
-                
+
         except Exception as e:
             self.logger.error(f"Error getting sync record: {e}")
             return None
     
-    async def record_sync_result(self, content_hash: str, target_name: str, 
-                               item_id: str, item_type: SyncItemType, 
+    async def record_sync_result(self, content_hash: str, target_name: str,
+                               item_id: str, item_type: SyncItemType,
                                result: SyncResult, metadata: Optional[Dict] = None):
         """
-        Record a sync result in the unified sync_records table.
-        
+        Record a sync result in the appropriate table (page_sync_records for PAGE_TEXT, sync_records for others).
+
         Args:
             content_hash: Hash of the synced content
             target_name: Name of the target system
@@ -337,37 +407,77 @@ class UnifiedSyncManager:
                 cursor = conn.cursor()
                 now = datetime.utcnow().isoformat()
                 synced_at = now if result.success else None
-                
-                # Merge metadata
-                final_metadata = metadata or {}
-                if result.metadata:
-                    final_metadata.update(result.metadata)
-                
-                cursor.execute('''
-                    INSERT OR REPLACE INTO sync_records 
-                    (content_hash, target_name, external_id, item_type, status, 
-                     item_id, metadata, error_message, retry_count, 
-                     created_at, updated_at, synced_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    content_hash,
-                    target_name,
-                    result.target_id or '',
-                    item_type.value,
-                    result.status.value,
-                    item_id,
-                    json.dumps(final_metadata),
-                    result.error_message,
-                    0,  # retry_count - reset on new attempt
-                    now,
-                    now,
-                    synced_at
-                ))
-                
+
+                # For PAGE_TEXT items, use page_sync_records table
+                if item_type == SyncItemType.PAGE_TEXT:
+                    # Parse item_id to extract notebook_uuid and page_number
+                    parts = item_id.split(':page:')
+                    if len(parts) != 2:
+                        self.logger.error(f"Invalid page item_id format: {item_id}")
+                        return
+
+                    notebook_uuid = parts[0]
+                    page_number = int(parts[1])
+
+                    # Extract Notion IDs from result metadata
+                    notion_page_id = result.target_id or result.metadata.get('notebook_page_id') if result.metadata else None
+                    notion_block_id = result.metadata.get('page_block_id') if result.metadata else None
+
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO page_sync_records
+                        (notebook_uuid, page_number, content_hash, target_name,
+                         notion_page_id, notion_block_id, status, error_message,
+                         retry_count, created_at, updated_at, synced_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        notebook_uuid,
+                        page_number,
+                        content_hash,
+                        target_name,
+                        notion_page_id,
+                        notion_block_id,
+                        result.status.value,
+                        result.error_message,
+                        0,  # retry_count - reset on new attempt
+                        now,
+                        now,
+                        synced_at
+                    ))
+
+                    self.logger.debug(f"Recorded page sync result: {notebook_uuid} page {page_number} -> {target_name} = {result.status.value}")
+
+                else:
+                    # For non-page items, use sync_records table
+                    # Merge metadata
+                    final_metadata = metadata or {}
+                    if result.metadata:
+                        final_metadata.update(result.metadata)
+
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO sync_records
+                        (content_hash, target_name, external_id, item_type, status,
+                         item_id, metadata, error_message, retry_count,
+                         created_at, updated_at, synced_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        content_hash,
+                        target_name,
+                        result.target_id or '',
+                        item_type.value,
+                        result.status.value,
+                        item_id,
+                        json.dumps(final_metadata),
+                        result.error_message,
+                        0,  # retry_count - reset on new attempt
+                        now,
+                        now,
+                        synced_at
+                    ))
+
+                    self.logger.debug(f"Recorded sync result: {content_hash[:8]}... -> {target_name} = {result.status.value}")
+
                 conn.commit()
-                
-                self.logger.debug(f"Recorded sync result: {content_hash[:8]}... -> {target_name} = {result.status.value}")
-                
+
         except Exception as e:
             self.logger.error(f"Error recording sync result: {e}")
             raise
