@@ -62,8 +62,13 @@ class NotionSyncTarget(SyncTarget):
         if self.tasks_database_id:
             try:
                 from .notion_todo_sync import NotionTodoSync
-                # Use db_path from database connection or default
-                db_path = './data/remarkable_pipeline.db'  # TODO: Get this from config
+                # Use db_path from db_manager if available, otherwise use default
+                if self.db_manager:
+                    db_path = str(self.db_manager.db_path)
+                else:
+                    from ..utils.config import Config
+                    db_path = Config().get('database.path', './data/remarkable_pipeline.db')
+
                 self.todo_sync = NotionTodoSync(
                     notion_token=notion_token,
                     tasks_database_id=tasks_database_id,
@@ -122,9 +127,9 @@ class NotionSyncTarget(SyncTarget):
             # Ensure we never pass None to avoid full refresh - use empty set as fallback
             if changed_pages is None:
                 changed_pages = set()  # Empty set = no specific pages changed, but avoid full refresh
-                logger.info(f"🔍 DEBUG: changed_pages was None, using empty set fallback")
+                logger.debug(f"changed_pages was None, using empty set fallback")
 
-            logger.info(f"🔍 DEBUG: changed_pages = {changed_pages} (type: {type(changed_pages)})")
+            logger.debug(f"changed_pages = {changed_pages} (type: {type(changed_pages)})")
 
             # Check if notebook already exists in Notion
             existing_page_id = self.notion_client.find_existing_page(notebook_uuid)
@@ -384,7 +389,7 @@ class NotionSyncTarget(SyncTarget):
         notebook_name = notebook_data.get('title', notebook_data.get('notebook_name', 'Untitled'))
         pages_data = notebook_data.get('pages', [])
 
-        self.logger.info(f"🔍 DEBUG: Creating notebook {notebook_name} (UUID: {notebook_uuid}) with {len(pages_data)} pages")
+        self.logger.debug(f"Creating notebook {notebook_name} (UUID: {notebook_uuid}) with {len(pages_data)} pages")
         for i, page in enumerate(pages_data[:3]):  # Log first 3 pages for debugging
             text_length = len(page.get('text', ''))
             text_preview = page.get('text', '')[:50].replace('\n', ' ')
@@ -394,7 +399,7 @@ class NotionSyncTarget(SyncTarget):
 
         # CRITICAL DEBUG: Log last few pages including page 16
         if len(pages_data) > 10:
-            self.logger.info(f"🔍 DEBUG: Last pages of {notebook_name}:")
+            self.logger.debug(f"Last pages of {notebook_name}:")
             for page in pages_data[-3:]:  # Last 3 pages
                 text_preview = page.get('text', '')[:50].replace('\n', ' ')
                 self.logger.info(f"   Page {page.get('page_number')}: '{text_preview}...'")
@@ -541,7 +546,7 @@ class NotionSyncTarget(SyncTarget):
                                     }
 
                             # Debug: Log what we're sending to Notion
-                            self.logger.info(f"🔍 DEBUG: Sending properties to Notion for {notebook.name}: {properties}")
+                            self.logger.debug(f"Sending properties to Notion for {notebook.name}: {properties}")
 
                             # Update the Notion page properties
                             response = self.notion_client.client.pages.update(page_id=existing_page_id, properties=properties)

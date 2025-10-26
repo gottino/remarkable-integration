@@ -205,23 +205,6 @@ class DatabaseManager:
             )
         ''')
         
-        # Integration sync status table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS integration_sync (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                integration_name TEXT NOT NULL,
-                record_type TEXT NOT NULL,  -- 'highlight', 'note', 'todo'
-                local_id INTEGER NOT NULL,
-                remote_id TEXT,
-                sync_status TEXT DEFAULT 'pending',  -- 'pending', 'synced', 'failed'
-                last_sync_attempt TIMESTAMP,
-                error_message TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(integration_name, record_type, local_id) ON CONFLICT REPLACE
-            )
-        ''')
-        
         # TODO: Add todos table for better todo tracking
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS todos (
@@ -271,7 +254,6 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_enhanced_highlights_passage ON enhanced_highlights(passage_id)",
             "CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)",
             "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)",
-            "CREATE INDEX IF NOT EXISTS idx_sync_integration ON integration_sync(integration_name, sync_status)",
             "CREATE INDEX IF NOT EXISTS idx_notebook_extractions_notebook ON notebook_text_extractions(notebook_uuid)",
             "CREATE INDEX IF NOT EXISTS idx_notebook_extractions_page ON notebook_text_extractions(notebook_uuid, page_uuid)",
             "CREATE INDEX IF NOT EXISTS idx_notebook_extractions_hash ON notebook_text_extractions(page_content_hash)",
@@ -436,8 +418,8 @@ class DatabaseManager:
             
             # Get table counts
             tables = [
-                'files', 'processing_results', 'highlights', 
-                'enhanced_highlights', 'ocr_results', 'events', 'integration_sync', 'todos', 'notebook_metadata'
+                'files', 'processing_results', 'highlights',
+                'enhanced_highlights', 'ocr_results', 'events', 'todos', 'notebook_metadata'
             ]
             
             stats = {
