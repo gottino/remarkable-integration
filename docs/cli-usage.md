@@ -81,7 +81,6 @@ poetry run python -m src.cli.main process-all "/remarkable/data" \
   --output-dir "digital_notes" \          # Save extracted text files
   --export-highlights "highlights.csv" \  # Export highlights to CSV
   --export-text "extraction_log.csv" \    # Export text results to CSV
-  --enhanced-highlights \                  # Use EPUB text matching
   --format md \                           # Markdown output
   --confidence 0.8 \                      # OCR quality threshold
   --language en \                         # OCR language
@@ -158,17 +157,11 @@ poetry run python -m src.cli.main text extract "/path/to/data" \
 # Process all files in a directory (basic extraction)
 poetry run python -m src.cli.main process directory /path/to/remarkable
 
-# Process with enhanced EPUB text matching
-poetry run python -m src.cli.main process directory /path/to/remarkable --enhanced
+# Process directory and extract highlights from PDFs/EPUBs
+poetry run python -m src.cli.main process directory /path/to/remarkable
 
 # Process and export results to CSV
 poetry run python -m src.cli.main process directory /path/to/remarkable --export highlights.csv
-
-# Compare basic vs enhanced extraction methods
-poetry run python -m src.cli.main process directory /path/to/remarkable --compare
-
-# Process a single file
-poetry run python -m src.cli.main process file /path/to/document.content --enhanced --show
 ```
 
 ### Database Management
@@ -188,8 +181,8 @@ poetry run python -m src.cli.main database cleanup --days 30 --vacuum
 # Export all highlights to CSV
 poetry run python -m src.cli.main export -o highlights.csv
 
-# Export enhanced highlights
-poetry run python -m src.cli.main export -o enhanced_highlights.csv --enhanced
+# Export all highlights
+poetry run python -m src.cli.main export -o highlights.csv --enhanced
 
 # Export highlights for specific document
 poetry run python -m src.cli.main export -o book_highlights.csv --title "My Book Title"
@@ -274,8 +267,7 @@ poetry run python -m src.cli.main config check
 poetry run python -m src.cli.main process-all "/Users/yourname/reMarkable" \
   --output-dir "digital_notes" \
   --export-highlights "all_highlights.csv" \
-  --export-text "extraction_log.csv" \
-  --enhanced-highlights
+  --export-text "extraction_log.csv"
 ```
 
 ### Daily Usage - Unified Processing (RECOMMENDED)
@@ -283,8 +275,7 @@ poetry run python -m src.cli.main process-all "/Users/yourname/reMarkable" \
 # Process everything in one command (auto-updates metadata)
 poetry run python -m src.cli.main process-all "/path/to/remarkable" \
   --output-dir "today_notes" \
-  --export-highlights "today_highlights.csv" \
-  --enhanced-highlights
+  --export-highlights "today_highlights.csv"
 
 # Quick processing without exports (auto-updates metadata)
 poetry run python -m src.cli.main process-all "/path/to/remarkable" --output-dir "notes"
@@ -301,7 +292,7 @@ poetry run python -m src.cli.main database stats
 ### Daily Usage - Individual Commands
 ```bash
 # Process new files and export highlights (legacy approach)
-poetry run python -m src.cli.main process directory "/Users/yourname/reMarkable" --enhanced --export today_highlights.csv
+poetry run python -m src.cli.main process directory "/Users/yourname/reMarkable" --export today_highlights.csv
 
 # Extract handwritten text separately
 poetry run python -m src.cli.main text extract "/path/to/remarkable" --output-dir "notes"
@@ -426,8 +417,7 @@ poetry install
 # 2. Process everything at once - handwritten notes + highlights
 poetry run python -m src.cli.main process-all "/remarkable/data" \
   --output-dir "digital_notes" \
-  --export-highlights "highlights.csv" \
-  --enhanced-highlights
+  --export-highlights "highlights.csv"
 
 # 3. Result: Perfect Markdown files + extracted highlights ready for any app!
 ```
@@ -437,8 +427,7 @@ poetry run python -m src.cli.main process-all "/remarkable/data" \
 # Complete processing to Obsidian vault
 poetry run python -m src.cli.main process-all data/ \
   --output-dir "/path/to/obsidian/vault" \
-  --export-highlights "/path/to/obsidian/highlights.csv" \
-  --enhanced-highlights
+  --export-highlights "/path/to/obsidian/highlights.csv"
 
 # Export structured data (text only)
 poetry run python -m src.cli.main text extract data/ --format json --output-dir "api_data"

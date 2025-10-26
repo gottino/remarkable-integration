@@ -29,11 +29,9 @@ from src.utils.config import Config
 from src.utils.api_keys import get_api_key_manager
 from src.core.database import DatabaseManager
 from src.core.events import setup_default_handlers, get_event_bus, EventType
-from src.processors.highlight_extractor import HighlightExtractor, process_directory
 from src.processors.enhanced_highlight_extractor import (
     EnhancedHighlightExtractor,
-    process_directory_enhanced,
-    compare_extraction_methods
+    process_directory_enhanced
 )
 from src.processors.notebook_text_extractor import (
     NotebookTextExtractor,
@@ -585,29 +583,23 @@ def process(ctx):
 
 @process.command('directory')
 @click.argument('directory')
-@click.option('--enhanced', is_flag=True, help='Use enhanced extraction with EPUB matching')
 @click.option('--export', help='Export results to CSV file')
-@click.option('--compare', is_flag=True, help='Compare basic vs enhanced extraction')
 @click.option('--text-extraction', is_flag=True, help='Extract text from notebooks using OCR')
 @click.pass_context
-def process_directory(ctx, directory: str, enhanced: bool, export: Optional[str], compare: bool, text_extraction: bool):
-    """Process all files in a directory."""
-    
+def process_directory(ctx, directory: str, export: Optional[str], text_extraction: bool):
+    """Process all files in a directory (extracts highlights from PDFs/EPUBs)."""
+
     if not os.path.exists(directory):
         click.echo(f"Directory not found: {directory}", err=True)
         sys.exit(1)
-    
+
     config_obj = ctx.obj['config']
     db_path = config_obj.get('database.path')
-    
+
     try:
         db_manager = DatabaseManager(db_path)
-        
-        if compare:
-            click.echo("Comparing extraction methods...")
-            results = compare_extraction_methods(directory)
-            _display_comparison_results(results)
-        elif text_extraction:
+
+        if text_extraction:
             click.echo("Extracting text from notebooks using OCR...")
             db_path = config_obj.get('database.path')
             language = config_obj.get('ocr.language', 'en')
@@ -624,26 +616,19 @@ def process_directory(ctx, directory: str, enhanced: bool, export: Optional[str]
                 exclude_notebooks=exclude_notebooks
             )
             _display_text_extraction_results(results)
-        elif enhanced:
-            click.echo("Processing with enhanced extraction...")
-            results = process_directory_enhanced(directory, db_manager)
-            _display_processing_results(results, "enhanced passages")
         else:
-            click.echo("Processing with basic extraction...")
-            results = process_directory(directory, db_manager)
+            # Extract highlights from PDFs/EPUBs
+            click.echo("Extracting highlights from PDFs/EPUBs...")
+            results = process_directory_enhanced(directory, db_manager)
             _display_processing_results(results, "highlights")
-        
-        # Export if requested
-        if export and not compare:
-            click.echo(f"\nExporting results to {export}...")
-            with db_manager.get_connection() as conn:
-                if enhanced:
+
+            # Export if requested
+            if export:
+                click.echo(f"\nExporting results to {export}...")
+                with db_manager.get_connection() as conn:
                     extractor = EnhancedHighlightExtractor(conn)
-                    extractor.export_enhanced_highlights_to_csv(export)
-                else:
-                    extractor = HighlightExtractor(conn)
                     extractor.export_highlights_to_csv(export)
-            click.echo("Export completed")
+                click.echo("Export completed")
             
     except Exception as e:
         click.echo(f"Processing failed: {e}", err=True)
@@ -914,35 +899,21 @@ def process_all(ctx, directory: str, output_dir: Optional[str], export_highlight
         
         # Step 2: Extract highlights from PDF/EPUB
         click.echo("\n📖 Step 2: Extracting highlights from PDF/EPUB documents...")
-        
-        if enhanced_highlights:
-            from src.processors.enhanced_highlight_extractor_v3 import process_directory_enhanced
-            highlight_results = process_directory_enhanced(directory, db_manager)
-            highlight_type = "enhanced passages"
-        else:
-            from src.processors.highlight_extractor import process_directory
-            highlight_results = process_directory(directory, db_manager)
-            highlight_type = "highlights"
-        
+
+        highlight_results = process_directory_enhanced(directory, db_manager)
+
         total_highlights = sum(highlight_results.values())
-        click.echo(f"✅ Highlight extraction completed: {total_highlights} {highlight_type} from {len(highlight_results)} files")
-        
+        click.echo(f"✅ Highlight extraction completed: {total_highlights} highlights from {len(highlight_results)} files")
+
         # Step 3: Export results if requested
         if export_highlights or export_text:
             click.echo("\n📤 Step 3: Exporting results...")
-            
+
             with db_manager.get_connection() as conn:
                 if export_highlights:
-                    if enhanced_highlights:
-                        # V3 enhanced extractor stores in database, export via direct SQL query
-                        click.echo("   ⚠️  Direct CSV export not yet implemented for v3 enhanced extractor")
-                        click.echo(f"   💡 Query results from database: sqlite3 {db_manager.db_path}")
-                        click.echo(f"   💡 Table: enhanced_highlights")
-                    else:
-                        from src.processors.highlight_extractor import HighlightExtractor
-                        extractor = HighlightExtractor(conn)
-                        extractor.export_highlights_to_csv(export_highlights)
-                        click.echo(f"   ✅ Highlights exported to: {export_highlights}")
+                    extractor = EnhancedHighlightExtractor(conn)
+                    extractor.export_highlights_to_csv(export_highlights)
+                    click.echo(f"   ✅ Highlights exported to: {export_highlights}")
                 
                 if export_text:
                     # Export text extraction results

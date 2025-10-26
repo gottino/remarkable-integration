@@ -926,7 +926,7 @@ class ReMarkableWatcher:
     async def _process_highlights_async(self, document_uuid: str):
         """Process PDF/EPUB highlights asynchronously."""
         import time
-        from ..processors.enhanced_highlight_extractor_v3 import EnhancedHighlightExtractorV3
+        from ..processors.enhanced_highlight_extractor import EnhancedHighlightExtractor
         from ..core.database import DatabaseManager
 
         try:
@@ -949,7 +949,7 @@ class ReMarkableWatcher:
 
             def extract_highlights():
                 with db_manager.get_connection() as conn:
-                    extractor = EnhancedHighlightExtractorV3(conn)
+                    extractor = EnhancedHighlightExtractor(conn)
                     result = extractor.process_file(str(content_file))
                     return result
 

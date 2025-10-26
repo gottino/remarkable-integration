@@ -34,8 +34,7 @@ poetry run python -m src.cli.main config api-key set
 # Automatically updates metadata for fresh folder structure and timestamps
 poetry run python -m src.cli.main process-all "/path/to/remarkable/data" \
   --output-dir "extracted_notes" \
-  --export-highlights "highlights.csv" \
-  --enhanced-highlights
+  --export-highlights "highlights.csv"
 
 # OR extract handwritten text only
 poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --output-dir "extracted_notes"

@@ -9,26 +9,22 @@ The highlight extractor processes reMarkable .content files (PDF/EPUB) and their
 
 ### 1. Basic Usage
 ```python
-from src.processors.highlight_extractor import HighlightExtractor, process_directory  
+from src.processors.enhanced_highlight_extractor import EnhancedHighlightExtractor, process_directory_enhanced
 from src.core.database import DatabaseManager
 
 # Initialize
 db_manager = DatabaseManager("highlights.db")
-results = process_directory("/path/to/remarkable/files", db_manager)
+results = process_directory_enhanced("/path/to/remarkable/files", db_manager)
 
 # Export to CSV
-extractor = HighlightExtractor(db_manager)
-extractor.export_highlights_to_csv("highlights.csv")
+with db_manager.get_connection() as conn:
+    extractor = EnhancedHighlightExtractor(conn)
+    extractor.export_highlights_to_csv("highlights.csv")
 ```
 
 ### 2. Interactive Demo
 ```bash
 python examples/highlight_extraction_demo.py --interactive
-```
-
-### 3. Migration from extract_text.py
-```bash
-python scripts/migrate_highlights.py /path/to/files --compare
 ```
 
 ## Features
