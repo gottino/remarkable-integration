@@ -73,8 +73,8 @@ poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --outp
 ## 🚀 Advanced Features
 
 ### Text Extraction & OCR
+- **Claude Vision OCR**: Superior handwriting recognition using Claude's vision capabilities
 - **Date Annotation Recognition**: Automatically detects your "lying L" date patterns in note corners
-- **Multi-Engine OCR**: Falls back from Claude → EasyOCR → Enhanced Tesseract → Tesseract
 - **Configurable Prompts**: Custom OCR prompts in `config/prompts/claude_ocr_default.txt`
 - **Blank Page Filtering**: Automatically skips Claude's blank placeholders
 - **Secure API Key Management**: Encrypted storage with keychain integration

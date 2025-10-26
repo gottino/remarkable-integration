@@ -39,9 +39,6 @@ except (ImportError, ModuleNotFoundError) as e:
     import logging
     logging.getLogger(__name__).info(f"anthropic not available: {e}")
 
-# Import base classes for compatibility
-from .tesseract_ocr_engine import BoundingBox, OCRResult, ProcessingResult
-
 # Database and events
 from ..core.events import get_event_bus, EventType
 from ..core.database import DatabaseManager
@@ -53,6 +50,63 @@ from ..utils.config import Config
 from ..utils.api_keys import get_anthropic_api_key
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BoundingBox:
+    """Bounding box for text regions."""
+    x: float
+    y: float
+    width: float
+    height: float
+
+    def to_dict(self) -> Dict[str, float]:
+        return {
+            'x': self.x,
+            'y': self.y,
+            'width': self.width,
+            'height': self.height
+        }
+
+
+@dataclass
+class OCRResult:
+    """Result of OCR processing on a text region."""
+    text: str
+    confidence: float
+    bounding_box: BoundingBox
+    language: str
+    page_number: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'text': self.text,
+            'confidence': self.confidence,
+            'bounding_box': self.bounding_box.to_dict(),
+            'language': self.language,
+            'page_number': self.page_number
+        }
+
+
+@dataclass
+class ProcessingResult:
+    """Result of OCR processing on a file."""
+    success: bool
+    file_path: str
+    processor_type: str
+    ocr_results: List[OCRResult]
+    error_message: Optional[str] = None
+    processing_time_ms: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'success': self.success,
+            'file_path': self.file_path,
+            'processor_type': self.processor_type,
+            'ocr_results': [result.to_dict() for result in self.ocr_results],
+            'error_message': self.error_message,
+            'processing_time_ms': self.processing_time_ms
+        }
 
 
 class ClaudeRateLimiter:

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed - OCR Engine Fallback (2025-10-26)
+- **Removed EasyOCR, Tesseract engines**: Deleted 4 OCR engine files (2,781 lines)
+  - `tesseract_ocr_engine.py` (552 lines)
+  - `enhanced_tesseract_ocr.py` (714 lines)
+  - `pdf_ocr_engine.py` (699 lines)
+  - `ocr_engine.py` (816 lines)
+- **Claude Vision only**: System now uses Claude Vision OCR exclusively for superior handwriting recognition
+- **Removed CLI commands**: Deleted obsolete `ocr directory`, `ocr file`, `ocr pdf-directory`, `ocr pdf-file` commands
+- **Simplified export**: Removed `--ocr` flag from export command
+- **Code cleanup**: Net reduction of 3,289 lines of code
+
 ### Added - Per-Page Sync Tracking (2025-10-20/21)
 - **Per-page sync records**: Individual `page_sync_records` table tracks each page separately
 - **Rate limiting**: 50 pages/sync with 0.35s delays to respect Notion API limits

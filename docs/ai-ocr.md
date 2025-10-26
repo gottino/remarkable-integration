@@ -212,14 +212,13 @@ The system automatically filters out blank or placeholder pages:
 - No wasted API calls
 - Better organization
 
-### Multi-Engine Fallback
+### Claude Vision OCR
 
-The system tries OCR engines in order of quality:
+The system uses Claude's vision capabilities exclusively for OCR:
 
-1. **Claude Vision** (best for handwriting) ✅
-2. **EasyOCR** (good general purpose)
-3. **Enhanced Tesseract** (improved traditional OCR)
-4. **Standard Tesseract** (fallback)
+- **Superior Handwriting Recognition**: Claude Vision provides the best accuracy for handwritten notes
+- **Context-Aware**: Understands handwriting context and formatting better than traditional OCR
+- **Configurable**: Customize prompts in `config/prompts/claude_ocr_default.txt`
 
 ### Corporate Network Support
 

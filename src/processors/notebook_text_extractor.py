@@ -24,10 +24,7 @@ from pathlib import Path
 import time
 
 # Import our existing components
-from .pdf_ocr_engine import PDFOCREngine, OCRResult
-from .tesseract_ocr_engine import TesseractOCREngine
-from .enhanced_tesseract_ocr import EnhancedTesseractOCREngine
-from .claude_vision_ocr import ClaudeVisionOCREngine
+from .claude_vision_ocr import ClaudeVisionOCREngine, OCRResult
 from ..core.rm_parser import RemarkableParser
 
 
@@ -363,49 +360,12 @@ class NotebookTextExtractor:
         self.max_pages = None  # Maximum pages to process per notebook (for testing)
         self.notebook_filter_list = None  # List of notebook UUIDs/names to process selectively
         
-        # OCR Engine Priority:
-        # 1. Claude Vision (best for handwriting)
-        # 2. EasyOCR (good general purpose)
-        # 3. Enhanced Tesseract (improved traditional OCR)
-        # 4. Regular Tesseract (fallback)
-        
-        # Try Claude Vision first (best for handwriting)
-        logger.info("Trying Claude Vision OCR (best for handwriting)...")
+        # OCR Engine: Claude Vision (best for handwriting)
+        logger.info("Initializing Claude Vision OCR...")
         self.ocr_engine = ClaudeVisionOCREngine(
             db_connection=db_connection,
             confidence_threshold=confidence_threshold
         )
-        
-        # If Claude not available, try EasyOCR
-        if not self.ocr_engine.is_available():
-            logger.info("Claude Vision not available, trying EasyOCR...")
-            self.ocr_engine = PDFOCREngine(
-                db_connection=db_connection,
-                language=language,
-                confidence_threshold=confidence_threshold,
-                enable_gpu=enable_gpu
-            )
-            
-            # If EasyOCR not available, try Enhanced Tesseract
-            if not self.ocr_engine.is_available():
-                logger.info("EasyOCR not available, trying Enhanced Tesseract OCR...")
-                # Convert language code: 'en' -> 'eng' for Tesseract
-                tesseract_lang = 'eng' if language == 'en' else language
-                self.ocr_engine = EnhancedTesseractOCREngine(
-                    db_connection=db_connection,
-                    language=tesseract_lang,
-                    confidence_threshold=confidence_threshold * 100,  # Tesseract uses 0-100 scale
-                    use_multiple_configs=True
-                )
-                
-                # If Enhanced Tesseract fails, fall back to regular Tesseract
-                if not self.ocr_engine.is_available():
-                    logger.info("Enhanced Tesseract not available, trying regular Tesseract OCR...")
-                    self.ocr_engine = TesseractOCREngine(
-                        db_connection=db_connection,
-                        language=tesseract_lang,
-                        confidence_threshold=confidence_threshold * 100
-                    )
         
         logger.info(f"Notebook Text Extractor initialized")
         logger.info(f"  OCR available: {self.ocr_engine.is_available()}")
@@ -2066,7 +2026,7 @@ def extract_text_from_directory(
             )
             
             if not extractor.is_available():
-                logger.error("Text extraction not available - check EasyOCR and pdf2image installation")
+                logger.error("Text extraction not available - check Claude API key configuration")
                 return {}
             
             # Apply filtering if needed
