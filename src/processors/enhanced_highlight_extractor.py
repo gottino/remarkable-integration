@@ -230,16 +230,25 @@ class EnhancedHighlightExtractor:
             
             # Extract and collate highlights properly (FIXED VERSION)
             highlights = self._extract_highlights_with_proper_collation(rm_files, doc_info)
-            
-            # Apply OCR corrections to properly collated text
+
+            # Match against PDF/EPUB to get clean text (if available)
+            highlights = self._match_against_source_document(highlights, doc_info)
+            pdf_match_count = sum(1 for h in highlights if h.correction_applied)
+
+            # Apply OCR corrections to properly collated text (for highlights not matched against PDF)
             corrected_highlights = self._apply_ocr_corrections(highlights)
-            
+            ocr_correction_count = sum(1 for h in corrected_highlights if h.correction_applied and not any(
+                orig_h.correction_applied and orig_h.file_name == h.file_name for orig_h in highlights
+            ))
+
             processing_time = time.time() - start_time
-            correction_count = sum(1 for h in corrected_highlights if h.correction_applied)
-            
+
             logger.info(f"Processing completed in {processing_time:.1f}s:")
-            logger.info(f"  - Extracted {len(corrected_highlights)} highlights from {len(rm_files)} .rm files") 
-            logger.info(f"  - Applied OCR corrections to {correction_count} highlights")
+            logger.info(f"  - Extracted {len(corrected_highlights)} highlights from {len(rm_files)} .rm files")
+            if pdf_match_count > 0:
+                logger.info(f"  - Matched {pdf_match_count} highlights against PDF source")
+            if ocr_correction_count > 0:
+                logger.info(f"  - Applied OCR corrections to {ocr_correction_count} highlights")
             
             # Store in database if connection available
             if self.db_connection and corrected_highlights:
@@ -253,7 +262,8 @@ class EnhancedHighlightExtractor:
                     'highlights': [h.to_dict() for h in corrected_highlights],
                     'rm_file_count': len(rm_files),
                     'title': doc_info.title,
-                    'correction_count': correction_count
+                    'pdf_match_count': pdf_match_count,
+                    'ocr_correction_count': ocr_correction_count
                 }
             )
             
@@ -342,30 +352,96 @@ class EnhancedHighlightExtractor:
             logger.error(f"Error processing .rm file {rm_file_path}: {e}")
             return []
     
+    def _match_against_source_document(self, highlights: List[Highlight], doc_info: DocumentInfo) -> List[Highlight]:
+        """
+        Match highlights against source PDF/EPUB to get clean text.
+
+        Args:
+            highlights: List of highlights extracted from .rm files
+            doc_info: Document information
+
+        Returns:
+            List of highlights with clean text from PDF/EPUB where available
+        """
+        # Find PDF file (reMarkable generates PDFs even for EPUBs)
+        pdf_path = Path(doc_info.content_file_path).parent / f"{doc_info.content_id}.pdf"
+        if not pdf_path.exists():
+            logger.debug(f"PDF file not found: {pdf_path}, skipping PDF matching")
+            return highlights
+
+        logger.debug(f"Found PDF file for {doc_info.file_type} document: {pdf_path.name}")
+
+        try:
+            from .pdf_text_matcher import PDFTextMatcher
+
+            matcher = PDFTextMatcher(str(pdf_path), fuzzy_threshold=65)
+            matched_count = 0
+
+            for highlight in highlights:
+                # Parse page number
+                try:
+                    page_num = int(highlight.page_number) if highlight.page_number != "Unknown" else None
+                except (ValueError, TypeError):
+                    page_num = None
+
+                if not page_num:
+                    logger.debug(f"Skipping highlight with unknown page: {highlight.file_name}")
+                    continue
+
+                # Try to match against PDF
+                result = matcher.match_highlight(
+                    corrupted_text=highlight.text,
+                    page_num=page_num,
+                    search_offset=2  # Search ±2 pages
+                )
+
+                if result:
+                    clean_text, score = result
+                    if score >= 65:  # Use fuzzy matches above 65% confidence
+                        highlight.original_text = highlight.text  # Save corrupted version
+                        highlight.text = clean_text  # Replace with clean text
+                        highlight.correction_applied = True
+                        highlight.confidence = score / 100.0
+                        matched_count += 1
+                        logger.debug(f"Matched highlight on page {page_num} (score: {score})")
+
+            logger.info(f"  - Matched {matched_count}/{len(highlights)} highlights against PDF")
+            return highlights
+
+        except Exception as e:
+            logger.warning(f"Error matching highlights against PDF: {e}")
+            return highlights
+
     def _apply_ocr_corrections(self, highlights: List[Highlight]) -> List[Highlight]:
-        """Apply OCR corrections to the properly collated highlights."""
+        """Apply OCR corrections to highlights that weren't matched against PDF."""
         corrected_highlights = []
-        
+
         for highlight in highlights:
-            corrected_text, correction_applied = self.ocr_corrector.correct_text(highlight.text)
-            
-            if correction_applied:
+            # Skip OCR correction if already matched against PDF
+            if highlight.correction_applied:
+                logger.debug(f"Skipping OCR for page {highlight.page_number}: already PDF-matched")
+                corrected_highlights.append(highlight)
+                continue
+
+            corrected_text, ocr_applied = self.ocr_corrector.correct_text(highlight.text)
+
+            if ocr_applied:
                 logger.debug(f"OCR correction on page {highlight.page_number}: "
                            f"'{highlight.text[:50]}...' → '{corrected_text[:50]}...'")
-            
-            # Create new highlight with corrections
+
+            # Create new highlight with OCR corrections
             corrected_highlight = Highlight(
                 text=corrected_text,
                 page_number=highlight.page_number,
                 file_name=highlight.file_name,
                 title=highlight.title,
-                confidence=highlight.confidence * (1.0 if correction_applied else 0.9),
-                original_text=highlight.text,  # Keep original for comparison
-                correction_applied=correction_applied
+                confidence=highlight.confidence * (1.0 if ocr_applied else 0.9),
+                original_text=highlight.original_text or highlight.text,  # Preserve original
+                correction_applied=ocr_applied
             )
-            
+
             corrected_highlights.append(corrected_highlight)
-        
+
         return corrected_highlights
     
     # ===============================
