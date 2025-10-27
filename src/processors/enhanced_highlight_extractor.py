@@ -439,27 +439,30 @@ class EnhancedHighlightExtractor:
         """Find .rm files associated with the document."""
         content_path = Path(doc_info.content_file_path)
         subdirectory = content_path.parent / doc_info.content_id
-        
+
         if not subdirectory.exists():
             logger.debug(f"Subdirectory does not exist: {subdirectory}")
             return []
-        
+
         rm_files = []
-        
+        skipped_count = 0
+        MIN_FILE_SIZE = 100  # bytes - files smaller than this are likely empty
+
         for file_path in subdirectory.iterdir():
             if not file_path.suffix == '.rm':
                 continue
-            
-            # Skip .rm files that have corresponding metadata JSON files
-            # (these are typically notebook files, not highlights)
-            json_file = subdirectory / f"{file_path.stem}-metadata.json"
-            if json_file.exists():
-                logger.debug(f"Skipping {file_path.name}: has metadata JSON file")
+
+            # Skip small files that likely don't contain highlights
+            # Empty .rm files are typically ~51 bytes (just headers)
+            # Highlight files are usually hundreds of bytes or more
+            file_size = file_path.stat().st_size
+            if file_size < MIN_FILE_SIZE:
+                skipped_count += 1
                 continue
-            
+
             rm_files.append(str(file_path))
-        
-        logger.debug(f"Found {len(rm_files)} .rm files for document {doc_info.title}")
+
+        logger.debug(f"Found {len(rm_files)} .rm files for document {doc_info.title} (skipped {skipped_count} small files)")
         return rm_files
     
     def _extract_ascii_text(self, binary_data: bytes) -> List[str]:
@@ -706,7 +709,7 @@ def process_directory_enhanced(directory_path: str, db_manager=None) -> Dict[str
         conn.close()
         
     except Exception as e:
-        logger.error(f"❌ Error in process_directory_v3: {e}")
+        logger.error(f"❌ Error in process_directory_enhanced: {e}")
         import traceback
         logger.error(traceback.format_exc())
     
@@ -717,20 +720,20 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python enhanced_highlight_extractor_v3.py <directory_path>")
+        print("Usage: python enhanced_highlight_extractor.py <directory_path>")
         print("  directory_path: Directory containing .content files")
         sys.exit(1)
     
     directory_path = sys.argv[1]
     
-    print("🚀 Enhanced Highlight Extraction v3")
+    print("🚀 Enhanced Highlight Extraction")
     print("=" * 50)
     print("🔧 Fixed: Proper text collation (no mixing)")
     print("✅ Feature: OCR error corrections")
     print("📄 Preserves: Original page-based grouping")
     print()
-    
-    results = process_directory_v3(directory_path)
+
+    results = process_directory_enhanced(directory_path)
     
     total_highlights = sum(results.values())
     processed_files = len([count for count in results.values() if count > 0])
