@@ -13,6 +13,7 @@ Transform your handwritten reMarkable notes into searchable digital text with AI
 - **🌍 Multi-language Support**: Seamlessly handles mixed-language notes
 - **🎯 Symbol Recognition**: Arrows, bullets, checkboxes, and custom notation
 - **📊 Multiple Export Formats**: Markdown, JSON, CSV with page organization
+- **✨ PDF Text Matching**: Recovers clean text from corrupted highlights with fuzzy matching and sentence expansion
 
 ### Smart Integrations
 - **✅ Smart Todo Extraction**: Automatically extracts checkboxes and syncs to Notion with page links
@@ -67,7 +68,7 @@ poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --outp
 - **[CLI Reference](docs/cli-usage.md)** - Complete command-line documentation
 - **[Notion Integration](docs/notion-integration.md)** - Real-time sync with per-page tracking
 - **[File Watching System](docs/watching-system.md)** - Automated real-time processing
-- **[Highlight Extraction](docs/highlight_extraction.md)** - Legacy highlight processing
+- **[Highlight Extraction](docs/highlight_extraction.md)** - PDF text matching and highlight processing
 
 ## 🚀 Advanced Features
 
@@ -91,6 +92,15 @@ poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --outp
 - **Highlight Sync**: Automatically sync PDF/EPUB highlights to Readwise
 - **Book Metadata**: Extracts author, publisher, publication date
 - **Cover Images**: Automatically downloads and stores book covers
+
+### PDF Text Matching for Highlights
+- **Fuzzy Text Matching**: Recovers clean text from corrupted .rm highlight annotations
+- **Character Recovery**: Automatically restores umlauts, accents, and special characters (ö→ö, ß→ß, é→é)
+- **Sentence Expansion**: Expands text fragments to complete sentences with proper boundaries
+- **Smart Page Mapping**: Searches ±2 pages to account for page number differences
+- **High Accuracy**: 65% confidence threshold with 100% match rate on test data
+- **EPUB Support**: Works with EPUBs using reMarkable's generated PDFs
+- **No False Corrections**: Skips OCR for PDF-matched highlights to preserve accuracy
 
 ### System Architecture
 - **Unified Sync**: Event-driven change tracking across all integrations

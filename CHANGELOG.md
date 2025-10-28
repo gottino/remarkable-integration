@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - PDF Text Matching for Highlights (2025-10-27)
+- **Fuzzy text matching**: Matches corrupted .rm highlight text against source PDF to recover clean text
+- **Sentence expansion**: Automatically expands fragments to complete sentences with proper boundaries
+- **Character recovery**: Restores corrupted umlauts, special characters (ö→ö, ß→ß, etc.)
+- **Smart page mapping**: Searches ±2 pages to account for reMarkable/PDF page number differences
+- **Whitespace normalization**: Cleans up tabs and formatting from PDF extraction
+- **High match rate**: 65% confidence threshold with 100% match rate on test data
+- **Works with EPUBs**: Uses reMarkable's generated PDF for EPUB documents
+- **No false corrections**: Skips OCR corrections for PDF-matched highlights
+- **Performance optimized**: Page caching and efficient sliding window fuzzy matching
+
+### Removed - OCR Engine Fallback (2025-10-27)
+- **Removed EasyOCR dependency**: Deleted easyocr and pytesseract from pyproject.toml (~200MB saved)
+- **Removed unused code**: Deleted 109 lines of commented SyncManager class
+- **Removed integration_sync table**: Cleaned up obsolete database schema
+- **Fixed hardcoded paths**: Database path now uses dependency injection
+- **Cleaned debug logging**: Converted logger.info() to logger.debug() for cleaner output
+
+### Refactored - Highlight Extraction (2025-10-27)
+- **Single extractor**: Consolidated 4 highlight extractor versions into one (3,182 lines removed)
+  - Deleted `enhanced_highlight_extractor_v2.py` (1,125 lines) - unused
+  - Deleted `enhanced_highlight_extractor.py v1` (1,370 lines) - had abandoned EPUB matching
+  - Deleted `highlight_extractor.py` (687 lines) - basic version superseded
+- **Simplified CLI**: Removed `--enhanced` and `--compare` flags (one extractor = simpler interface)
+- **Updated documentation**: Removed references to deleted flags in README and docs
+- **Metadata file handling**: Now processes .rm files with metadata (previously skipped as notebooks)
+- **Size filtering**: Efficiently skips empty .rm files (<100 bytes) for performance
+
 ### Removed - OCR Engine Fallback (2025-10-26)
 - **Removed EasyOCR, Tesseract engines**: Deleted 4 OCR engine files (2,781 lines)
   - `tesseract_ocr_engine.py` (552 lines)
