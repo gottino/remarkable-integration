@@ -193,7 +193,7 @@ class ClaudeVisionOCREngine:
         self,
         db_connection: Optional[sqlite3.Connection] = None,
         api_key: Optional[str] = None,
-        model: str = "claude-3-5-sonnet-20241022",
+        model: str = "claude-haiku-4-5",
         confidence_threshold: float = 0.8,
         rate_limit_requests: int = 30,
         rate_limit_input_tokens: int = 25000,
