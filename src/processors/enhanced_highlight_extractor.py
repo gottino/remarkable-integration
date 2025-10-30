@@ -356,6 +356,10 @@ class EnhancedHighlightExtractor:
         """
         Match highlights against source PDF/EPUB to get clean text.
 
+        Two-stage matching:
+        1. Match corrupted .rm text against PDF (recovers some formatting)
+        2. For EPUBs: Match PDF text against original EPUB (eliminates PDF artifacts)
+
         Args:
             highlights: List of highlights extracted from .rm files
             doc_info: Document information
@@ -371,11 +375,13 @@ class EnhancedHighlightExtractor:
 
         logger.debug(f"Found PDF file for {doc_info.file_type} document: {pdf_path.name}")
 
+        # Stage 1: Match against PDF
         try:
             from .pdf_text_matcher import PDFTextMatcher
 
-            matcher = PDFTextMatcher(str(pdf_path), fuzzy_threshold=65)
-            matched_count = 0
+            pdf_matcher = PDFTextMatcher(str(pdf_path), fuzzy_threshold=65)
+            pdf_matched_count = 0
+            total_pdf_pages = pdf_matcher.total_pages
 
             for highlight in highlights:
                 # Parse page number
@@ -389,7 +395,7 @@ class EnhancedHighlightExtractor:
                     continue
 
                 # Try to match against PDF
-                result = matcher.match_highlight(
+                result = pdf_matcher.match_highlight(
                     corrupted_text=highlight.text,
                     page_num=page_num,
                     search_offset=2  # Search ±2 pages
@@ -399,18 +405,79 @@ class EnhancedHighlightExtractor:
                     clean_text, score = result
                     if score >= 65:  # Use fuzzy matches above 65% confidence
                         highlight.original_text = highlight.text  # Save corrupted version
-                        highlight.text = clean_text  # Replace with clean text
+                        highlight.text = clean_text  # Replace with PDF text
                         highlight.correction_applied = True
                         highlight.confidence = score / 100.0
-                        matched_count += 1
-                        logger.debug(f"Matched highlight on page {page_num} (score: {score})")
+                        pdf_matched_count += 1
+                        logger.debug(f"PDF matched highlight on page {page_num} (score: {score})")
 
-            logger.info(f"  - Matched {matched_count}/{len(highlights)} highlights against PDF")
-            return highlights
+            logger.info(f"  - Stage 1: Matched {pdf_matched_count}/{len(highlights)} highlights against PDF")
 
         except Exception as e:
             logger.warning(f"Error matching highlights against PDF: {e}")
             return highlights
+
+        # Stage 2: For EPUB documents, match PDF text against original EPUB
+        # This eliminates PDF artifacts (ligatures, encoding issues)
+        if doc_info.file_type == 'epub':
+            epub_path = Path(doc_info.content_file_path).parent / f"{doc_info.content_id}.epub"
+
+            if epub_path.exists():
+                logger.debug(f"Found EPUB source file: {epub_path.name}")
+
+                try:
+                    from .epub_text_matcher import EPUBTextMatcher
+
+                    epub_matcher = EPUBTextMatcher(str(epub_path), fuzzy_threshold=85)
+                    epub_matched_count = 0
+
+                    for highlight in highlights:
+                        # Only try EPUB matching for highlights that were PDF-matched
+                        # (we want to replace PDF artifacts with clean EPUB text)
+                        if not highlight.correction_applied:
+                            continue
+
+                        try:
+                            page_num = int(highlight.page_number) if highlight.page_number != "Unknown" else None
+                        except (ValueError, TypeError):
+                            continue
+
+                        if not page_num:
+                            continue
+
+                        # Match PDF text against EPUB to get clean version
+                        result = epub_matcher.match_highlight(
+                            pdf_text=highlight.text,  # PDF text (may have artifacts)
+                            pdf_page=page_num,
+                            total_pdf_pages=total_pdf_pages,
+                            expand_sentences=True,
+                            window_size=0.10  # Search ±10% of book
+                        )
+
+                        if result:
+                            epub_text, score = result
+
+                            # Validate that the found text is actually similar to the input
+                            # (prevents false matches in large search windows)
+                            from fuzzywuzzy import fuzz
+                            similarity = fuzz.ratio(highlight.text[:100], epub_text[:100])
+
+                            if score >= 85 and similarity >= 70:  # Both fuzzy score and similarity check
+                                # Replace PDF text with clean EPUB text
+                                highlight.text = epub_text
+                                # Update confidence to EPUB match score
+                                highlight.confidence = score / 100.0
+                                epub_matched_count += 1
+                                logger.debug(f"EPUB matched highlight on page {page_num} (score: {score}, similarity: {similarity}%)")
+                            elif similarity < 70:
+                                logger.debug(f"Rejected EPUB match on page {page_num}: low similarity ({similarity}%) despite high score ({score})")
+
+                    logger.info(f"  - Stage 2: Matched {epub_matched_count}/{pdf_matched_count} PDF highlights against EPUB source")
+
+                except Exception as e:
+                    logger.warning(f"Error matching highlights against EPUB: {e}")
+
+        return highlights
 
     def _apply_ocr_corrections(self, highlights: List[Highlight]) -> List[Highlight]:
         """Apply OCR corrections to highlights that weren't matched against PDF."""

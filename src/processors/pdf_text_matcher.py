@@ -66,6 +66,25 @@ class PDFTextMatcher:
             self._page_cache[page_num] = text
             return text
 
+    def clean_pdf_text(self, text: str) -> str:
+        """
+        Clean PDF text by removing non-printable characters and normalizing whitespace.
+
+        - Removes non-printable control characters (except newlines, tabs, carriage returns)
+        - Replaces tabs and multiple spaces with single space
+        """
+        # Remove non-printable control characters (keep only newlines, tabs, carriage returns)
+        # ASCII control characters are 0-31, except \n (10), \r (13), \t (9)
+        text = ''.join(c for c in text if ord(c) >= 32 or c in '\n\r\t')
+
+        # Replace tabs and multiple spaces with single space
+        text = re.sub(r'\s+', ' ', text)
+
+        # Strip leading/trailing whitespace
+        text = text.strip()
+
+        return text
+
     def normalize_text(self, text: str) -> str:
         """
         Normalize text for fuzzy matching.
@@ -109,6 +128,8 @@ class PDFTextMatcher:
 
             # Map back to original text approximately
             clean_text = self._extract_original_text(page_text, start_pos, end_pos)
+            # Clean non-printable characters
+            clean_text = self.clean_pdf_text(clean_text)
             logger.debug(f"Exact match found on page {page_num}")
             return (clean_text, 100, start_pos, end_pos)
 
@@ -168,8 +189,8 @@ class PDFTextMatcher:
                 original_text, best_start_word, best_end_word
             )
             clean_text = original_text[char_start:char_end].strip()
-            # Normalize whitespace
-            clean_text = re.sub(r'\s+', ' ', clean_text)
+            # Clean non-printable characters and normalize whitespace
+            clean_text = self.clean_pdf_text(clean_text)
             return (clean_text, best_score, char_start, char_end)
 
         return None
@@ -272,8 +293,8 @@ class PDFTextMatcher:
 
         expanded = text[start:end].strip()
 
-        # Normalize whitespace: replace tabs and multiple spaces with single space
-        expanded = re.sub(r'\s+', ' ', expanded)
+        # Clean non-printable characters and normalize whitespace
+        expanded = self.clean_pdf_text(expanded)
 
         logger.debug(f"Expanded fragment to full sentence(s): {len(expanded) - (match_end - match_start)} chars added")
         return expanded

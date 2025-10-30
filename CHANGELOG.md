@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - EPUB Text Matching for Artifact-Free Highlights (2025-10-30)
+- **Two-stage matching pipeline**: First matches .rm → PDF, then PDF → EPUB for cleanest text
+- **Eliminates PDF artifacts**: Removes ligatures and encoding issues (suHcient→sufficient, in^Yexible→inflexible)
+- **Position-based windowing**: Searches ±10% of book around PDF page position for efficiency
+- **Smart validation**: Rejects false matches (requires 70% similarity + 85% fuzzy score)
+- **Automatic fallback**: Keeps PDF text if EPUB match fails or is rejected
+- **EPUB-only feature**: Only processes EPUB documents, PDFs skip stage 2
+- **Performance**: ~2x slower than PDF-only (~15-20 seconds for 19 highlights)
+- **Non-printable character cleanup**: Removes control characters that caused hex display in DB Browser
+
 ### Added - PDF Text Matching for Highlights (2025-10-27)
 - **Fuzzy text matching**: Matches corrupted .rm highlight text against source PDF to recover clean text
 - **Sentence expansion**: Automatically expands fragments to complete sentences with proper boundaries
