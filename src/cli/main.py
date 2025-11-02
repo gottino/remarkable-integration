@@ -1408,6 +1408,259 @@ def sync_notion(ctx, token: Optional[str], database_id: str, update_existing: bo
         sys.exit(1)
 
 
+@cli.command('sync-readwise')
+@click.option('--api-key', help='Readwise API key (or set READWISE_API_KEY env var)')
+@click.option('--database', help='Database path (overrides config)')
+@click.option('--dry-run', is_flag=True, help='Show what would be synced without actually syncing')
+@click.pass_context
+def sync_readwise(ctx, api_key: Optional[str], database: Optional[str], dry_run: bool):
+    """Sync highlights to Readwise."""
+    import asyncio
+    from src.integrations.readwise_sync import ReadwiseAPIClient
+    from src.utils.api_keys import get_readwise_api_key
+
+    config_obj = ctx.obj['config']
+
+    # Get Readwise API key
+    if not api_key:
+        api_key = os.getenv('READWISE_API_KEY')
+        if not api_key:
+            api_key = get_readwise_api_key()
+
+    if not api_key:
+        click.echo("❌ Readwise API key required", err=True)
+        click.echo("💡 Set via --api-key, READWISE_API_KEY env var, or use 'config set-key readwise <key>'")
+        click.echo("💡 Get your key from: https://readwise.io/access_token")
+        sys.exit(1)
+
+    # Setup database
+    db_path = database or config_obj.get('database.path')
+    if not db_path:
+        click.echo("❌ Database path not configured. Run 'config init' first.", err=True)
+        sys.exit(1)
+
+    if not os.path.exists(db_path):
+        click.echo(f"❌ Database not found: {db_path}", err=True)
+        sys.exit(1)
+
+    click.echo(f"🚀 {'[DRY RUN] ' if dry_run else ''}Starting Readwise sync...")
+    click.echo(f"📊 Database: {db_path}")
+    click.echo()
+
+    async def run_sync():
+        """Run the sync operation with per-highlight tracking."""
+        import sqlite3
+        from datetime import datetime
+        from src.core.sync_engine import ContentFingerprint
+        from src.core.book_metadata import BookMetadataManager
+
+        # Initialize Readwise client
+        client = ReadwiseAPIClient(api_key)
+
+        # Connect to database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Initialize metadata manager
+        metadata_manager = BookMetadataManager(conn)
+
+        # Get highlights with sync status
+        cursor.execute('''
+            SELECT
+                h.id, h.title, h.original_text, h.corrected_text,
+                h.page_number, h.notebook_uuid, h.file_name,
+                hsr.id as sync_record_id, hsr.content_hash as synced_hash,
+                hsr.status as sync_status
+            FROM enhanced_highlights h
+            LEFT JOIN highlight_sync_records hsr
+                ON h.id = hsr.highlight_id AND hsr.target_name = 'readwise'
+            ORDER BY h.notebook_uuid, CAST(h.page_number AS INTEGER)
+        ''')
+
+        all_highlights = cursor.fetchall()
+
+        if not all_highlights:
+            click.echo("📭 No highlights found in database")
+            conn.close()
+            return
+
+        # Group by document and filter what needs syncing
+        docs_with_highlights = {}
+        highlights_to_sync = []
+
+        for row in all_highlights:
+            (highlight_id, title, original_text, corrected_text, page_num,
+             uuid, file_name, sync_record_id, synced_hash, sync_status) = row
+
+            # Track document stats
+            if uuid not in docs_with_highlights:
+                docs_with_highlights[uuid] = {'title': title, 'total': 0, 'to_sync': 0}
+            docs_with_highlights[uuid]['total'] += 1
+
+            # Calculate current content hash
+            current_hash = ContentFingerprint.for_highlight({
+                'text': original_text,
+                'corrected_text': corrected_text,
+                'source_file': file_name or '',
+                'page_number': page_num or 0
+            })
+
+            # Check if needs syncing
+            needs_sync = (
+                sync_record_id is None or
+                synced_hash != current_hash or
+                sync_status in ('pending', 'failed')
+            )
+
+            if needs_sync:
+                docs_with_highlights[uuid]['to_sync'] += 1
+                highlights_to_sync.append((
+                    highlight_id, title, original_text, corrected_text,
+                    page_num, uuid, file_name, current_hash, sync_record_id
+                ))
+
+        # Show summary
+        click.echo(f"📚 Found {len(docs_with_highlights)} document(s):")
+        for doc_info in docs_with_highlights.values():
+            status = f"{doc_info['to_sync']} new" if doc_info['to_sync'] > 0 else "✓ synced"
+            click.echo(f"   • {doc_info['title']}: {doc_info['total']} highlights ({status})")
+
+        click.echo()
+        total_to_sync = len(highlights_to_sync)
+        total_highlights = len(all_highlights)
+        already_synced = total_highlights - total_to_sync
+
+        click.echo(f"Total: {total_highlights} highlights")
+        click.echo(f"  • Already synced: {already_synced}")
+        click.echo(f"  • To sync: {total_to_sync}")
+        click.echo()
+
+        if total_to_sync == 0:
+            click.echo("✨ All highlights already synced!")
+            conn.close()
+            return
+
+        if dry_run:
+            click.echo(f"🔍 Dry run - would sync {total_to_sync} highlights")
+            conn.close()
+            return
+
+        # Sync highlights
+        synced_count = 0
+        failed_count = 0
+
+        click.echo(f"Syncing {total_to_sync} highlights...")
+
+        for (highlight_id, title, original_text, corrected_text, page_num,
+             uuid, file_name, content_hash, sync_record_id) in highlights_to_sync:
+
+            # Convert page to int
+            try:
+                page_int = int(page_num) if page_num else None
+            except (ValueError, TypeError):
+                page_int = None
+
+            # Use corrected text if available
+            text = corrected_text if corrected_text and corrected_text.strip() else original_text
+
+            # Get book metadata for this notebook
+            book_metadata = metadata_manager.get_book_metadata(uuid)
+
+            # Use actual metadata if available
+            if book_metadata:
+                book_title = book_metadata.title
+                author = book_metadata.authors or "reMarkable"
+                # Set category based on document type
+                if book_metadata.document_type == 'epub':
+                    category = 'books'
+                elif book_metadata.document_type == 'pdf':
+                    category = 'articles'
+                else:
+                    category = 'books'
+            else:
+                book_title = title
+                author = "reMarkable"
+                category = "books"
+
+            highlight = {
+                "text": text,
+                "title": book_title,
+                "author": author,
+                "category": category,
+                "source_type": "remarkable",
+                "highlighted_at": datetime.now().isoformat(),
+            }
+
+            if page_int is not None:
+                highlight["location"] = page_int
+                highlight["location_type"] = "page"
+
+            # Send to Readwise
+            try:
+                async with client as api_client:
+                    result = await api_client.import_highlights([highlight])
+
+                # Record successful sync
+                now = datetime.now().isoformat()
+                if sync_record_id:
+                    cursor.execute('''
+                        UPDATE highlight_sync_records
+                        SET content_hash = ?, synced_at = ?, status = 'completed',
+                            error_message = NULL, updated_at = ?
+                        WHERE id = ?
+                    ''', (content_hash, now, now, sync_record_id))
+                else:
+                    cursor.execute('''
+                        INSERT INTO highlight_sync_records
+                        (highlight_id, notebook_uuid, target_name, content_hash,
+                         synced_at, status, created_at, updated_at)
+                        VALUES (?, ?, 'readwise', ?, ?, 'completed', ?, ?)
+                    ''', (highlight_id, uuid, content_hash, now, now, now))
+
+                conn.commit()
+                synced_count += 1
+
+            except Exception as e:
+                # Record failed sync
+                error_msg = str(e)
+                now = datetime.now().isoformat()
+
+                if sync_record_id:
+                    cursor.execute('''
+                        UPDATE highlight_sync_records
+                        SET status = 'failed', error_message = ?,
+                            retry_count = retry_count + 1, updated_at = ?
+                        WHERE id = ?
+                    ''', (error_msg, now, sync_record_id))
+                else:
+                    cursor.execute('''
+                        INSERT INTO highlight_sync_records
+                        (highlight_id, notebook_uuid, target_name, content_hash,
+                         status, error_message, retry_count, created_at, updated_at)
+                        VALUES (?, ?, 'readwise', ?, 'failed', ?, 1, ?, ?)
+                    ''', (highlight_id, uuid, content_hash, error_msg, now, now))
+
+                conn.commit()
+                failed_count += 1
+
+        conn.close()
+
+        click.echo()
+        click.echo(f"🎉 Sync completed!")
+        click.echo(f"✅ {synced_count} highlights synced to Readwise")
+        if failed_count > 0:
+            click.echo(f"⚠️  {failed_count} highlights failed")
+
+    try:
+        asyncio.run(run_sync())
+    except Exception as e:
+        click.echo(f"\n❌ Sync failed: {e}", err=True)
+        if ctx.obj.get('verbose'):
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
 @cli.group()
 @click.pass_context
 def sync(ctx):

@@ -978,74 +978,203 @@ class ReMarkableWatcher:
             return {"success": False, "error": str(e)}
 
     async def _sync_highlights_to_readwise(self, document_uuid: str, db_manager):
-        """Sync extracted highlights to Readwise using unified sync system."""
-        from ..core.sync_engine import SyncItem, SyncItemType, ContentFingerprint
+        """Sync extracted highlights to Readwise using per-highlight sync tracking."""
+        from ..core.sync_engine import ContentFingerprint
+        from ..core.book_metadata import BookMetadataManager
+        from ..integrations.readwise_sync import ReadwiseAPIClient
+        from ..utils.api_keys import get_readwise_api_key
+        from datetime import datetime
 
         try:
-            # Get highlights from database
+            # Get Readwise API key
+            readwise_api_key = get_readwise_api_key()
+            if not readwise_api_key:
+                logger.debug("Readwise API key not found, skipping sync")
+                return
+
+            # Get book metadata for this document
+            book_metadata = None
+            with db_manager.get_connection() as conn:
+                metadata_manager = BookMetadataManager(conn)
+                book_metadata = metadata_manager.get_book_metadata(document_uuid)
+
+            # Get highlights from database that need syncing
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
+
+                # Get all highlights for this document with their sync status
                 cursor.execute('''
-                    SELECT id, title, original_text, corrected_text, page_number, notebook_uuid, file_name
-                    FROM enhanced_highlights
-                    WHERE notebook_uuid = ?
-                    ORDER BY page_number
+                    SELECT
+                        h.id, h.title, h.original_text, h.corrected_text,
+                        h.page_number, h.notebook_uuid, h.file_name,
+                        hsr.id as sync_record_id, hsr.content_hash as synced_hash,
+                        hsr.status as sync_status
+                    FROM enhanced_highlights h
+                    LEFT JOIN highlight_sync_records hsr
+                        ON h.id = hsr.highlight_id AND hsr.target_name = 'readwise'
+                    WHERE h.notebook_uuid = ?
+                    ORDER BY CAST(h.page_number AS INTEGER)
                 ''', (document_uuid,))
 
-                highlights = cursor.fetchall()
+                all_highlights = cursor.fetchall()
 
-            if not highlights:
+            if not all_highlights:
                 logger.debug(f"No highlights found for {document_uuid}")
                 return
 
-            # Create SyncItems for each highlight and use unified sync
-            readwise_target = self.unified_sync_manager.get_target("readwise")
-            if not readwise_target:
-                logger.debug("Readwise sync not configured, skipping")
+            # Filter highlights that need syncing (new or changed)
+            highlights_to_sync = []
+            for row in all_highlights:
+                (highlight_id, title, original_text, corrected_text, page_num,
+                 uuid, file_name, sync_record_id, synced_hash, sync_status) = row
+
+                # Calculate current content hash
+                current_hash = ContentFingerprint.for_highlight({
+                    'text': original_text,
+                    'corrected_text': corrected_text,
+                    'source_file': file_name or '',
+                    'page_number': page_num or 0
+                })
+
+                # Sync if: no sync record, hash changed, or previous sync failed
+                needs_sync = (
+                    sync_record_id is None or
+                    synced_hash != current_hash or
+                    sync_status in ('pending', 'failed')
+                )
+
+                if needs_sync:
+                    highlights_to_sync.append((
+                        highlight_id, title, original_text, corrected_text,
+                        page_num, uuid, file_name, current_hash, sync_record_id
+                    ))
+
+            if not highlights_to_sync:
+                logger.debug(f"All highlights for {document_uuid} already synced")
                 return
+
+            logger.info(f"Syncing {len(highlights_to_sync)} highlights to Readwise...")
+
+            # Initialize Readwise client
+            client = ReadwiseAPIClient(readwise_api_key)
 
             synced_count = 0
             skipped_count = 0
+            failed_count = 0
 
-            for highlight_id, title, original_text, corrected_text, page_num, uuid, file_name in highlights:
-                # Prepare highlight data
-                highlight_data = {
-                    'id': highlight_id,
-                    'title': title,
-                    'text': original_text,
-                    'corrected_text': corrected_text,
-                    'page_number': page_num,
-                    'notebook_uuid': uuid,
-                    'file_name': file_name,
-                    'source_url': f'remarkable://{uuid}',
-                    'location': int(page_num) if page_num and page_num.isdigit() else None,
-                    'location_type': 'page'
+            # Format and send highlights to Readwise
+            for (highlight_id, title, original_text, corrected_text, page_num,
+                 uuid, file_name, content_hash, sync_record_id) in highlights_to_sync:
+
+                # Convert page number to integer
+                try:
+                    page_int = int(page_num) if page_num else None
+                except (ValueError, TypeError):
+                    page_int = None
+
+                # Use corrected text if available
+                text = corrected_text if corrected_text and corrected_text.strip() else original_text
+
+                # Use actual book metadata if available
+                if book_metadata:
+                    book_title = book_metadata.title
+                    author = book_metadata.authors or "reMarkable"
+                    # Set category based on document type
+                    if book_metadata.document_type == 'epub':
+                        category = 'books'
+                    elif book_metadata.document_type == 'pdf':
+                        category = 'articles'
+                    else:
+                        category = 'books'
+                else:
+                    book_title = title
+                    author = "reMarkable"
+                    category = "books"
+
+                # Format for Readwise
+                readwise_highlight = {
+                    "text": text,
+                    "title": book_title,
+                    "author": author,
+                    "category": category,
+                    "source_type": "remarkable",
+                    "highlighted_at": datetime.now().isoformat(),
                 }
 
-                # Generate content hash for deduplication
-                content_hash = ContentFingerprint.for_highlight(highlight_data)
+                if page_int is not None:
+                    readwise_highlight["location"] = page_int
+                    readwise_highlight["location_type"] = "page"
 
-                # Create SyncItem
-                sync_item = SyncItem(
-                    item_type=SyncItemType.HIGHLIGHT,
-                    item_id=f"{uuid}_{highlight_id}",
-                    content_hash=content_hash,
-                    data=highlight_data
-                )
+                # Send to Readwise
+                try:
+                    async with client as api_client:
+                        result = await api_client.import_highlights([readwise_highlight])
 
-                # Use unified sync manager to sync (handles deduplication automatically)
-                result = await self.unified_sync_manager.sync_item(sync_item, target_name="readwise")
+                    # Record successful sync
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        now = datetime.now().isoformat()
 
-                if result.status.name == 'SUCCESS':
+                        if sync_record_id:
+                            # Update existing record
+                            cursor.execute('''
+                                UPDATE highlight_sync_records
+                                SET content_hash = ?, synced_at = ?, status = 'completed',
+                                    error_message = NULL, updated_at = ?
+                                WHERE id = ?
+                            ''', (content_hash, now, now, sync_record_id))
+                        else:
+                            # Insert new record
+                            cursor.execute('''
+                                INSERT INTO highlight_sync_records
+                                (highlight_id, notebook_uuid, target_name, content_hash,
+                                 synced_at, status, created_at, updated_at)
+                                VALUES (?, ?, 'readwise', ?, ?, 'completed', ?, ?)
+                            ''', (highlight_id, uuid, content_hash, now, now, now))
+
+                        conn.commit()
+
                     synced_count += 1
-                elif result.status.name == 'SKIPPED':
-                    skipped_count += 1
-                    logger.debug(f"Skipped highlight {highlight_id}: {result.metadata.get('reason', 'Unknown')}")
 
-            logger.info(f"✅ Readwise sync complete: {synced_count} synced, {skipped_count} skipped (already synced)")
+                except Exception as e:
+                    # Record failed sync
+                    error_msg = str(e)
+                    logger.warning(f"Failed to sync highlight {highlight_id}: {error_msg}")
+
+                    with db_manager.get_connection() as conn:
+                        cursor = conn.cursor()
+                        now = datetime.now().isoformat()
+
+                        if sync_record_id:
+                            # Update existing record
+                            cursor.execute('''
+                                UPDATE highlight_sync_records
+                                SET status = 'failed', error_message = ?,
+                                    retry_count = retry_count + 1, updated_at = ?
+                                WHERE id = ?
+                            ''', (error_msg, now, sync_record_id))
+                        else:
+                            # Insert new failed record
+                            cursor.execute('''
+                                INSERT INTO highlight_sync_records
+                                (highlight_id, notebook_uuid, target_name, content_hash,
+                                 status, error_message, retry_count, created_at, updated_at)
+                                VALUES (?, ?, 'readwise', ?, 'failed', ?, 1, ?, ?)
+                            ''', (highlight_id, uuid, content_hash, error_msg, now, now))
+
+                        conn.commit()
+
+                    failed_count += 1
+
+            if synced_count > 0:
+                logger.info(f"✅ Readwise sync complete: {synced_count} highlights synced")
+            if failed_count > 0:
+                logger.warning(f"⚠️  {failed_count} highlights failed to sync")
 
         except Exception as e:
             logger.error(f"Error syncing highlights to Readwise: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
 
     async def _find_parent_notebook(self, page_uuid: str) -> Optional[str]:
         """Find the parent notebook UUID for a given page UUID."""

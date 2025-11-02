@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Readwise Sync Metadata Integration (2025-11-02)
+- **Book metadata in sync**: Readwise sync now uses real book authors from `notebook_metadata` table instead of hardcoded "reMarkable"
+- **Title cleanup**: Fixed book titles that incorrectly included author names
+- **Utility scripts**: Created scripts for managing Readwise sync and duplicates
+  - `scripts/fix_titles_with_authors.py`: Clean up titles with author suffixes
+  - `scripts/fix_readwise_duplicates.py`: Clear sync records for re-syncing
+  - `scripts/check_readwise_duplicates.py`: Identify duplicate books
+  - `scripts/reprocess_highlights_with_epub_matching.py`: Batch re-extract EPUB highlights with text matching
+- **File watcher integration**: File watcher now pulls book metadata (title, author, category) for automatic Readwise sync
+- **Deduplication awareness**: Documented Readwise's title+author+source matching behavior for preventing duplicates
+
 ### Added - EPUB Text Matching for Artifact-Free Highlights (2025-10-30)
 - **Two-stage matching pipeline**: First matches .rm → PDF, then PDF → EPUB for cleanest text
 - **Eliminates PDF artifacts**: Removes ligatures and encoding issues (suHcient→sufficient, in^Yexible→inflexible)
