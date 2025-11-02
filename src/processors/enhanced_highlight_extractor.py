@@ -166,11 +166,12 @@ class EnhancedHighlightExtractor:
         self.processor_type = "enhanced_highlight_extractor"
         self.db_connection = db_connection
         
-        # Use same filtering settings as original (proven to work)
-        self.min_text_length = 8
-        self.text_threshold = 0.4
-        self.min_words = 2
-        self.symbol_ratio_threshold = 0.3
+        # Quality filtering settings (stricter to prevent gibberish)
+        self.min_text_length = 15  # Minimum 15 characters
+        self.text_threshold = 0.6  # Require 60% letters
+        self.min_words = 3  # Require at least 3 words
+        self.symbol_ratio_threshold = 0.2  # Allow max 20% symbols
+        self.max_consecutive_symbols = 3  # Max consecutive non-alphanumeric chars
         
         # Initialize OCR corrector
         self.ocr_corrector = OCRCorrector()
@@ -641,15 +642,19 @@ class EnhancedHighlightExtractor:
             
             if contains_unwanted:
                 continue
-            
-            # Apply quality heuristics
+
+            # Apply quality heuristics (strict to prevent gibberish)
+            if len(cleaned_text) < self.min_text_length:
+                continue
             if not self._is_mostly_text(cleaned_text):
                 continue
             if not self._has_enough_words(cleaned_text):
                 continue
             if not self._has_low_symbol_ratio(cleaned_text):
                 continue
-            
+            if not self._has_no_excessive_consecutive_symbols(cleaned_text):
+                continue
+
             cleaned_sentences.append(cleaned_text)
         
         logger.debug(f"Filtering results: {len(cleaned_sentences)}/{len(text_list)} sequences passed")
@@ -672,7 +677,23 @@ class EnhancedHighlightExtractor:
             return False
         symbols = sum(not c.isalnum() and not c.isspace() for c in text)
         return symbols / len(text) < self.symbol_ratio_threshold
-    
+
+    def _has_no_excessive_consecutive_symbols(self, text: str) -> bool:
+        """Check if text doesn't have too many consecutive non-alphanumeric characters."""
+        if not text:
+            return False
+
+        consecutive_count = 0
+        for char in text:
+            if not char.isalnum() and not char.isspace():
+                consecutive_count += 1
+                if consecutive_count > self.max_consecutive_symbols:
+                    return False
+            else:
+                consecutive_count = 0
+
+        return True
+
     def _calculate_confidence(self, text: str) -> float:
         """Calculate confidence score for extracted text."""
         score = 1.0

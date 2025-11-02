@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved - Highlight Quality Filtering (2025-11-02)
+- **Stricter gibberish detection**: Increased quality thresholds to prevent meaningless text extraction
+  - Minimum text length: 8 → 15 characters
+  - Required alphabetic ratio: 40% → 60%
+  - Minimum word count: 2 → 3 words
+  - Maximum symbol ratio: 30% → 20%
+  - Added consecutive symbol limit: max 3 non-alphanumeric characters in a row
+- **Cleanup utility**: Created `scripts/cleanup_gibberish_highlights.py` to remove existing gibberish
+- **Database cleanup**: Removed 86 gibberish highlights from existing data (49% of highlights)
+- **Prevention**: Future extractions now reject low-quality text at source
+
 ### Fixed - Readwise Sync Metadata Integration (2025-11-02)
 - **Book metadata in sync**: Readwise sync now uses real book authors from `notebook_metadata` table instead of hardcoded "reMarkable"
 - **Title cleanup**: Fixed book titles that incorrectly included author names

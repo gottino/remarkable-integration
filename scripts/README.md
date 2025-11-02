@@ -66,6 +66,29 @@ poetry run python scripts/reprocess_highlights_with_pdf_matching.py
 poetry run python scripts/reprocess_highlights_with_pdf_matching.py --live
 ```
 
+## Data Quality Scripts
+
+### cleanup_gibberish_highlights.py
+Removes gibberish/low-quality highlights from the database.
+
+Usage:
+```bash
+poetry run python scripts/cleanup_gibberish_highlights.py
+```
+
+What it does:
+- Scans all highlights for gibberish (excessive symbols, insufficient words, low alphabetic ratio)
+- Groups results by book for review
+- Prompts for confirmation before deletion
+- Removes both highlights and their sync records
+
+Quality criteria:
+- Minimum 15 characters
+- At least 60% alphabetic characters
+- At least 3 words
+- Maximum 20% symbol ratio
+- No more than 3 consecutive non-alphanumeric characters
+
 ## Legacy Scripts
 
 ### migrate_highlights.py
