@@ -313,11 +313,9 @@ Instructions:
 - Extract ALL visible handwritten text, including notes, arrows, symbols, and annotations
 - Format the output as clean Markdown with proper structure
 - Use ## for main headings, ### for subheadings
-- For straight arrows, use → ← ↑ ↓ symbols
-- For curved/hooked arrows (↳), use ↳ symbol - these indicate indented sub-points, NOT tasks
+- For arrows, use → ← ↑ ↓ symbols
 - For bullet points, use - (dash) for bullets, NOT asterisks
-- For checkboxes (square boxes □), use - [ ] for empty and - [x] for checked
-- IMPORTANT: Distinguish between curved arrows (↳) and checkboxes (□) - they are NOT the same
+- For checkboxes, use - [ ] for empty and - [x] for checked
 - Use **bold** for emphasis where appropriate
 - Use `code` for any technical terms or special notation
 - Maintain line breaks and logical structure
