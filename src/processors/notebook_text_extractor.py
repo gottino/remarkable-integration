@@ -175,7 +175,11 @@ class NotebookTextResult:
                 line = line.strip()
                 if not line:
                     continue
-                
+
+                # Skip lines that start with curved arrows (↳) - these are sub-points, not tasks
+                if line.startswith('↳') or line.startswith('- ↳'):
+                    continue
+
                 # Look for checkbox patterns in the formatted text
                 todo_patterns = [
                     # Markdown-style checkboxes (what Claude Vision outputs)
