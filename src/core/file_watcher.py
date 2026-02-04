@@ -842,6 +842,8 @@ class ReMarkableWatcher:
                 tasks = []
 
                 if is_notebook:
+                    # Ensure new notebooks are added to database first
+                    await self._ensure_notebook_in_database(file_uuid)
                     logger.info(f"🔄 Detected handwritten notebook change: {file_uuid}")
                     tasks.append(self._process_notebook_async(file_uuid))
 
@@ -890,17 +892,29 @@ class ReMarkableWatcher:
             logger.error(f"Error processing file change {file_path}: {e}")
 
     async def _is_notebook_uuid(self, uuid: str) -> bool:
-        """Check if UUID corresponds to a handwritten notebook (not a page)."""
-        try:
-            from ..core.database import DatabaseManager
-            db_path = self.config.get('database.path')
-            db_manager = DatabaseManager(db_path)
+        """Check if UUID corresponds to a handwritten notebook (not a page).
 
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT 1 FROM notebook_metadata WHERE notebook_uuid = ? LIMIT 1', (uuid,))
-                return cursor.fetchone() is not None
-        except Exception:
+        Checks the .content file directly on the filesystem (like _is_pdf_epub_uuid),
+        rather than querying the database. This ensures new notebooks are detected
+        even before they are added to the database.
+        """
+        try:
+            # Check .content file directly (mirrors _is_pdf_epub_uuid pattern)
+            source_dir = self.config.get('remarkable.source_directory')
+            content_file = Path(source_dir) / f"{uuid}.content"
+
+            if not content_file.exists():
+                return False
+
+            import json
+            with open(content_file, 'r') as f:
+                content_data = json.load(f)
+
+            file_type = content_data.get('fileType', '')
+            # Empty fileType or 'notebook' = handwritten notebook
+            return file_type in ['', 'notebook']
+        except Exception as e:
+            logger.debug(f"Error checking if {uuid} is notebook: {e}")
             return False
 
     async def _is_pdf_epub_uuid(self, uuid: str) -> bool:
@@ -922,6 +936,30 @@ class ReMarkableWatcher:
         except Exception as e:
             logger.debug(f"Error checking if {uuid} is PDF/EPUB: {e}")
             return False
+
+    async def _ensure_notebook_in_database(self, uuid: str):
+        """Ensure notebook metadata exists in database for new notebooks.
+
+        This handles the case where a new notebook is synced while the watch
+        command is running - the metadata scan only runs at startup, so we
+        need to add new notebooks to the database on-demand.
+        """
+        try:
+            from ..core.notebook_paths import update_changed_metadata_only
+            from ..core.database import DatabaseManager
+
+            db_path = self.config.get('database.path')
+            db_manager = DatabaseManager(db_path)
+            source_dir = self.config.get('remarkable.source_directory')
+
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT 1 FROM notebook_metadata WHERE notebook_uuid = ? LIMIT 1', (uuid,))
+                if cursor.fetchone() is None:
+                    logger.info(f"📝 New notebook detected - adding {uuid} to database")
+                    update_changed_metadata_only(source_dir, conn, {uuid}, source_dir)
+        except Exception as e:
+            logger.error(f"Error ensuring notebook {uuid} in database: {e}")
 
     async def _process_highlights_async(self, document_uuid: str):
         """Process PDF/EPUB highlights asynchronously."""
