@@ -1,9 +1,14 @@
 # Migration Plan: Replace Claude Vision OCR with Google Gemini 2.5 Flash
 
 **Status:** Planned — not yet executed
-**Author:** drafted 2026-05-27
+**Author:** drafted 2026-05-27; reworked & verified against codebase 2026-06-04
 **Estimated effort:** half a day end-to-end including validation
 **Target machine:** any dev machine with the repo checked out
+
+> **Verification note (2026-06-04):** Every file/line reference, the integration
+> contract, the DB schema, and the dependency graph below were checked against
+> the current `main` (`7babd23`). Corrections from the original draft are marked
+> inline with **[verified]** / **[corrected]**.
 
 ---
 
@@ -26,14 +31,19 @@ Net effect: **~440 fewer lines of code**, one fewer SDK dependency, both prompt 
 
 | File | Lines | Role |
 |---|---|---|
-| `src/processors/claude_vision_ocr.py` | 617 | Whole engine: rate limiter, PDF→image, Claude API call, prompt loading, DB write |
-| `src/processors/notebook_text_extractor.py` | 4 touchpoints (lines 27, 90, 369, 901) | Only production caller — imports `ClaudeVisionOCREngine, OCRResult`, calls `is_available()` and `process_file()` |
-| `src/utils/api_keys.py` | ~5 methods | Anthropic-only key storage helpers |
-| `src/cli/main.py` (~lines 210–282) | 4 commands | `config api-key set/get/remove/list`, currently Anthropic-specific |
-| `config/config.yaml` (line 46) | 1 key | `processing.ocr.claude_prompt_file` |
+| `src/processors/claude_vision_ocr.py` | 617 **[verified]** | Whole engine: rate limiter, PDF→image, Claude API call, prompt loading, DB write |
+| `src/processors/notebook_text_extractor.py` | 4 touchpoints (lines 27, 369, 375/391, 901) **[verified]** | Only production caller — imports `ClaudeVisionOCREngine, OCRResult`, calls `is_available()` and `process_file()` |
+| `src/utils/api_keys.py` | generic manager **[corrected]** | **Not Anthropic-specific.** Exposes generic `get_api_key(service)` / `store_api_key(service)` / `remove`, plus thin per-service convenience wrappers (`get_anthropic_api_key`, …) and module-level shims. A `list_stored_keys()` method walks a **hardcoded** service dict. |
+| `src/cli/main.py` (lines 190–282) **[verified]** | 4 commands | `config api-key set/get/remove/list`, currently hardcoded to Anthropic (`sk-ant-` check at line 222, `store_anthropic_api_key` at 228, etc.) |
+| `config/config.yaml` (line 46) | 1 key | `processing.ocr.claude_prompt_file` **[verified]** |
 | `config/prompts/claude_ocr_default.txt` | — | File-based prompt; already nearly provider-agnostic |
-| `pyproject.toml` (line 38) | 1 dep | `anthropic = "^0.64.0"` |
-| `tests/manual/test_enhanced_extraction.py` | 1 file | The only test reference |
+| `pyproject.toml` (lines 26, 36, 38) | 3 deps **[corrected]** | `anthropic = "^0.64.0"` (38), `pdf2image = "^1.17.0"` (36), `pillow = "^10.0.0"` (26) — see dependency note below |
+
+**[corrected] There are NO automated tests of the OCR engine.** `tests/manual/test_enhanced_extraction.py` (listed in the original draft) references the *highlight* extractors, not OCR — a grep of `tests/` for `claude_vision_ocr` / `ClaudeVisionOCREngine` / `anthropic` returns nothing. `ClaudeVisionOCREngine` is referenced in exactly **two** files: the engine itself and `notebook_text_extractor.py`. **Consequence:** `poetry run pytest` will *not* catch an OCR regression. The Phase 5 manual smoke test is the only safety net — treat it as mandatory, not optional.
+
+### Dependency note (verified across `src/`)
+
+`from PIL import Image`, `import numpy as np`, and `pdf2image.convert_from_path` are used **only** inside `claude_vision_ocr.py` — no other module in `src/` imports any of them. Therefore, once the Claude engine is deleted in Phase 4, **all three** of `pdf2image`, `pillow`, and `numpy` become removable (the original draft only flagged `pdf2image` and incorrectly guessed `pillow` was used by the SVG/PDF pipeline). Still grep `tests/` and any scripts before the final removal, but `src/` is clean.
 
 ### How `notebook_text_extractor.py` uses the engine
 
@@ -76,6 +86,22 @@ The dataclasses `BoundingBox`, `OCRResult`, `ProcessingResult` are defined insid
 - They send PDF bytes directly via `types.Part.from_bytes(pdf_bytes, "application/pdf")` — **this is the central simplification** that lets us drop `pdf2image`.
 - They strip markdown code fences (` ``` `) from Gemini's output. Keep this.
 - They use a hardcoded `OCR_PROMPT` constant; **we load from a file** via the existing prompt-loader pattern (see `_load_prompt` in `claude_vision_ocr.py`).
+- They log token usage via `response.usage_metadata.prompt_token_count` / `.candidates_token_count`. Optional but cheap to keep for cost tracking — include it in the new engine's success log line.
+
+### Two database tables — important, was not in the original draft **[corrected]**
+
+There are two distinct tables, and the OCR engine only writes one of them:
+
+1. **`ocr_results`** — written by the engine's `_store_ocr_results()` (`DELETE`+`INSERT` keyed on `source_file`). **This table is never read anywhere** — a repo-wide grep finds only the engine's own write. It is effectively **dead/write-only code.**
+2. **`notebook_text_extractions`** — the table whose text is actually consumed downstream (sync, change detection, page-level sync). It is written by **`notebook_text_extractor.py`**, *not* by the OCR engine. The extractor takes the `OCRResult` objects returned from `process_file()` and persists them here itself. Schema (verified, `database.py:227`) has columns `notebook_uuid, notebook_name, page_uuid, page_number, text, confidence, …`.
+
+**Implications for the new engine:**
+
+- The Gemini engine does **not** need to touch `notebook_text_extractions` — that path is unchanged and lives in the (untouched) extractor. The contract is purely "return correct `OCRResult` objects."
+- Because nothing reads `ocr_results`, you have a choice for the new engine:
+  - **(simpler, recommended)** Drop `_store_ocr_results` and the `db_connection` write path entirely — the engine just returns `OCRResult`s. Fewer lines, removes dead code. The `db_connection` constructor param can stay (ignored) to preserve the call signature, or be dropped since the only caller passes it positionally-by-keyword (see contract below).
+  - **(safest parity)** Copy `_store_ocr_results` verbatim to keep byte-for-byte behavior. Choose this only if you want zero behavioral delta for now.
+- Phase 5.2's validation deletes from `notebook_text_extractions` (the right table — it has a `page_number` column, verified) to trigger re-extraction. Deleting from `ocr_results` would do nothing.
 
 ---
 
@@ -85,37 +111,48 @@ Each phase is a clean commit point. Run `poetry run pytest` and a quick manual O
 
 ### Phase 1 — Dependencies and API key management (no behavior change)
 
-**1.1 `pyproject.toml`**
+**1.1 `pyproject.toml`** — **[corrected: ADD only; do not remove anything yet]**
 
-- Remove `anthropic = "^0.64.0"`.
-- Add `google-genai = "^1.0.0"` (verify latest stable version with `poetry search google-genai` or PyPI).
-- Run `poetry lock && poetry install`.
-- Decide whether to keep `pdf2image` and `pillow`:
-  - `pdf2image` — only used by `claude_vision_ocr.py`. **Safe to drop.**
-  - `pillow` — likely used by the SVG/PDF rendering pipeline (`rm_converter` etc.). Grep `from PIL` and `import PIL` before removing.
+- **Add** `google-genai = "^1.0.0"` (verify latest stable version on PyPI; the reference impl uses `from google import genai`).
+- **Do NOT remove `anthropic`, `pdf2image`, `pillow`, or `numpy` in this phase.** They are still imported by `claude_vision_ocr.py`, which the extractor keeps importing until Phase 3 and which is not deleted until Phase 4. Removing the Claude deps here would leave OCR broken across Phases 1–2, contradicting the "each phase is a clean, working commit" goal. All Claude-side dependency removal happens in **Phase 4**, mirroring how the Anthropic *key methods* are also kept until Phase 4.
+- Run `poetry lock && poetry install` to pull in `google-genai`.
 
-**1.2 `src/utils/api_keys.py`**
+> Rationale for the reorder: the original draft removed `anthropic` here, but the
+> import in `notebook_text_extractor.py:27` and the engine file both survive until
+> Phases 3–4. `claude_vision_ocr.py` guards its `import anthropic` in a
+> `try/except ImportError` (lines 34–40), so a removed dep wouldn't crash on
+> import — but `is_available()` would silently return `False` and OCR would
+> stop working with no error until Gemini is wired in. Keep Claude fully
+> functional until Gemini is proven in Phase 3.
 
-- Add three new methods mirroring the Anthropic ones:
-  - `get_google_ai_api_key() -> Optional[str]`
-  - `store_google_ai_api_key(api_key: str, method: str = 'auto') -> bool`
-  - `remove_google_ai_api_key() -> bool`
-- Use keychain entry name `google-ai-api-key`.
-- Add a top-level convenience `def get_google_ai_api_key()` mirroring `get_anthropic_api_key()` at the bottom of the file.
-- **Keep the Anthropic methods for now** — they get deleted in Phase 4 once we know everything works.
+**1.2 `src/utils/api_keys.py`** — **[corrected: it's a generic manager, less work than the draft implied]**
 
-**1.3 `src/cli/main.py` (~lines 210–282)**
+The manager already does the heavy lifting generically via `get_api_key(service)` / `store_api_key(service, …)` / `remove`. The keychain username is derived as `f"{service}_api_key"` (see `_get_from_keychain`), so the *only* thing that defines a "service" is the string you pass.
 
-Generalize the `config api-key` command group to take a service. Recommended shape:
+**Pick one canonical service string and use it everywhere.** This plan uses **`google`** (so the keychain entry becomes `google_api_key`, and the `google-genai` SDK also natively reads the `GOOGLE_API_KEY` env var as a free fallback). The original draft mixed `gemini`, `google-ai-api-key`, and `get_google_ai_api_key` — don't; inconsistency causes silent keychain misses.
+
+Concretely:
+
+- Add convenience wrappers mirroring the existing Anthropic ones (each is a one-liner over the generic methods):
+  - `get_google_api_key(self) -> Optional[str]` → `return self.get_api_key('google', interactive_setup=False)`
+  - `store_google_api_key(self, api_key, method='auto') -> bool` → `return self.store_api_key('google', api_key, method)`
+  - `remove_google_api_key(self) -> bool` → mirror `remove_anthropic_api_key`
+- Add a **module-level** `def get_google_api_key()` at the bottom, mirroring `get_anthropic_api_key()` (line 449). This is the symbol the new engine imports.
+- **[corrected] Add `'google'` to the hardcoded `services` dict in `list_stored_keys()`** (around line 186): `'google': ['GOOGLE_API_KEY', 'GEMINI_API_KEY']`. The original draft claimed `config api-key list` "already works since it walks the keychain" — it does **not**; it iterates a hardcoded `{anthropic, readwise, notion}` dict, so without this edit a stored Google key never shows up in `list`.
+- **Keep the Anthropic methods for now** — they get deleted in Phase 4 once everything works.
+
+**1.3 `src/cli/main.py` (lines 190–282)** **[verified line range]**
+
+Generalize the `config api-key` command group to take a service. **Use the same canonical service string as 1.2 (`google`).**
 
 ```bash
-poetry run python -m src.cli.main config api-key set --service gemini
+poetry run python -m src.cli.main config api-key set --service google
 poetry run python -m src.cli.main config api-key set --service anthropic   # still works during transition
 ```
 
-- Add `--service` (default `gemini`) to `set/get/remove`.
-- Make the `sk-ant-` prefix check conditional on service. Gemini keys typically start with `AIza`.
-- `list` should already work since it walks the keychain entries.
+- Add `--service` (default `google`) to `set/get/remove`. Today these call `store_anthropic_api_key` / `get_anthropic_api_key` / `remove_anthropic_api_key` directly (lines 228, 241, 263) — dispatch on `--service` to the matching generic/convenience method instead.
+- Make the `sk-ant-` prefix check (line 222) conditional on `--service`. Google keys start with `AIza`. Simplest: only warn for `anthropic`, skip the prefix check for `google` (or drop it entirely and let the first API call fail with a clearer error — see R4).
+- `list` (line 269) needs no change here **once `'google'` is added to the `services` dict in 1.2** — it just prints whatever `list_stored_keys()` returns.
 
 ### Phase 2 — Build the new engine
 
@@ -141,7 +178,7 @@ except ImportError as e:
     GENAI_AVAILABLE = False
 
 from ..core.events import EventType, get_event_bus
-from ..utils.api_keys import get_google_ai_api_key
+from ..utils.api_keys import get_google_api_key   # canonical name from Phase 1.2
 from ..utils.config import Config
 
 logger = logging.getLogger(__name__)
@@ -192,12 +229,12 @@ class GeminiVisionOCREngine:
 
         self.client = None
         if GENAI_AVAILABLE:
-            api_key = api_key or get_google_ai_api_key()
+            api_key = api_key or get_google_api_key()
             if api_key:
                 self.client = genai.Client(api_key=api_key)
                 logger.info(f"Gemini Vision OCR initialized with model: {self.model}")
             else:
-                logger.error("No Google AI API key found. Use 'config api-key set --service gemini' to configure.")
+                logger.error("No Google API key found. Use 'config api-key set --service google' to configure.")
 
         self.ocr_prompt = self._load_prompt()
         logger.info(f"Gemini Vision OCR Engine initialized (available: {self.is_available()})")
@@ -274,9 +311,11 @@ class GeminiVisionOCREngine:
 
 Notes:
 
-- The `_load_prompt` and `_store_ocr_results` methods can be copied verbatim from `claude_vision_ocr.py` — they have no Claude-specific logic. Only swap the config key name from `processing.ocr.claude_prompt_file` to `processing.ocr.prompt_file`.
-- The `_default_prompt()` fallback string in `claude_vision_ocr.py` should also be copied — the prompt content is provider-agnostic.
+- `_load_prompt` can be copied verbatim from `claude_vision_ocr.py` (it has no Claude-specific logic) — just swap the config key from `processing.ocr.claude_prompt_file` to `processing.ocr.prompt_file`.
+- **`_store_ocr_results` / `db_connection` — your call (see "Two database tables" above).** Recommended: **omit it** — nothing reads the `ocr_results` table, so the engine only needs to return correct `OCRResult`s; the consumed text is written by the (untouched) extractor into `notebook_text_extractions`. The skeleton above keeps the `db_connection` param + write path for parity; delete it if you take the simpler route. If you keep it, copy `_store_ocr_results` verbatim (same `ocr_results` schema, same INSERT).
+- The `_default_prompt()` fallback string in `claude_vision_ocr.py` should also be copied — the prompt content is provider-agnostic. (The reference impl's `OCR_PROMPT` is a good cross-check; the file-based `config/prompts/ocr_default.txt` is the source of truth at runtime.)
 - Keep the `if __name__ == '__main__':` smoke-test block at the bottom (the existing one accepts a PDF path on the CLI) — used in Phase 5 validation.
+- `confidence` has no real meaning for Gemini (no per-page score) — set it to `self.confidence_threshold` exactly as Claude did, so the `notebook_text_extractions.confidence` column keeps the same placeholder convention (see R2).
 
 **2.2 `config/config.yaml`** — update `processing.ocr`:
 
@@ -284,10 +323,13 @@ Notes:
 processing:
   ocr:
     confidence_threshold: 0.7
-    enabled: false
+    enabled: false                                # NOTE: dead flag — grep shows nothing reads
+                                                  # processing.ocr.enabled. OCR runs regardless.
+                                                  # Leave as-is; don't expect flipping it to gate anything.
     language: en
     provider: gemini                              # NEW — informational
-    model: gemini-2.5-flash                       # NEW — file-editable now
+    model: gemini-2.5-flash                       # NEW — file-editable now (engine reads
+                                                  # processing.ocr.model with this default)
     prompt_file: config/prompts/ocr_default.txt   # RENAMED from claude_prompt_file
 ```
 
@@ -324,24 +366,34 @@ Only proceed after Phase 3 smoke test passes.
 
 **4.1** Delete `src/processors/claude_vision_ocr.py`.
 
-**4.2** Confirm `anthropic` is gone from `pyproject.toml` and `poetry.lock`.
+**4.2 Remove the now-orphaned dependencies from `pyproject.toml`** (deferred here from Phase 1.1). After deleting the engine, these have no remaining importer in `src/`:
+- `anthropic = "^0.64.0"`
+- `pdf2image = "^1.17.0"`
+- `pillow = "^10.0.0"`
+- `numpy` (if it's a direct dep — confirm it's not pulled in transitively/used elsewhere first)
 
-**4.3** Drop `pdf2image` from `pyproject.toml` if not used elsewhere:
+Re-verify before removing, then re-lock:
 ```bash
+grep -rn "import anthropic\|from anthropic" src/
 grep -rn "pdf2image\|convert_from_path" src/
+grep -rn "from PIL\|import PIL" src/
+grep -rn "import numpy\|from numpy" src/
+# all four should return nothing but the (now-deleted) engine; also glance at tests/ and scripts/
+poetry lock && poetry install
 ```
 
-**4.4** Remove Anthropic methods from `src/utils/api_keys.py`:
-- `get_anthropic_api_key`, `store_anthropic_api_key`, `remove_anthropic_api_key`
-- The module-level `get_anthropic_api_key()` convenience function
-- Any references in `_api_key_manager` initialization
+**4.3** Remove Anthropic helpers from `src/utils/api_keys.py` (the generic core stays):
+- `get_anthropic_api_key`, `store_anthropic_api_key`, `remove_anthropic_api_key` (convenience wrappers)
+- The module-level `get_anthropic_api_key()` shim (line 449)
+- The `'anthropic'` entry in the `list_stored_keys()` services dict
+- **Do not touch** `get_api_key` / `store_api_key` / `_get_from_keychain` etc. — those are generic and still used by readwise/notion/google.
 
-**4.5** Clean up `src/cli/main.py`:
-- Remove the `sk-ant-` validation branch entirely (or keep behind `--service anthropic` if you want defensive compatibility — recommended to delete).
+**4.4** Clean up `src/cli/main.py`:
+- Remove the `sk-ant-` validation branch (line 222), or keep it behind `--service anthropic` for defensive compatibility — recommended to delete since the Anthropic methods are gone.
 
-**4.6** `tests/manual/test_enhanced_extraction.py` — sweep for `claude_vision_ocr`, `ClaudeVisionOCREngine`, `anthropic`, update or remove obsolete tests.
+**4.5 Tests — [corrected]:** there is **nothing to sweep.** No test references the OCR engine (`tests/manual/test_enhanced_extraction.py` is about highlight extraction, not OCR). Just confirm `grep -rn "claude_vision_ocr\|ClaudeVisionOCREngine" tests/ scripts/` is empty. The original draft's step to edit that test file was based on a misidentification — skip it.
 
-**4.7** Optionally: manually remove the stored Anthropic key from macOS Keychain via Keychain Access app (search `anthropic-api-key`). Not required — orphaned entries are harmless.
+**4.6** Optionally: manually remove the stored Anthropic key from macOS Keychain via Keychain Access app (search `anthropic_api_key`). Not required — orphaned entries are harmless.
 
 ### Phase 5 — Validation
 
@@ -362,13 +414,13 @@ Pick a PDF from a temp dir during a previous OCR run, or render one fresh. Expec
 **5.2 End-to-end via watcher**
 
 1. Pick a notebook that's already fully OCR'd (e.g. Christian).
-2. In the DB, delete one page's row:
+2. In the DB, delete one page's row — **`notebook_text_extractions` is the correct table** (it has a `page_number` column, verified; `ocr_results` is the dead one and deleting from it does nothing):
    ```sql
    DELETE FROM notebook_text_extractions
    WHERE notebook_uuid = '<uuid>' AND page_number = <N>;
    ```
 3. Touch the notebook's `.metadata` file (see `docs/watching-system.md` for the directory).
-4. Tail the log: expect `Processing PDF with Gemini Vision OCR` and a successful insert.
+4. Tail the log: expect the line `Processing PDF with Gemini Vision OCR` (make sure you updated the log string in Phase 3.1 — otherwise it'll still say "Claude") and a successful re-insert of the deleted row.
 5. Compare the new text against what was there before (eyeball the diff for major regressions).
 
 **5.3 Failure modes to confirm**
@@ -414,28 +466,30 @@ If we ever want to support both providers, the right time is when there's a real
 ## Touch list (final diff summary)
 
 ```
-modified:   pyproject.toml
-modified:   config/config.yaml
-modified:   src/cli/main.py
-modified:   src/utils/api_keys.py
-modified:   src/processors/notebook_text_extractor.py    (2 lines)
-modified:   tests/manual/test_enhanced_extraction.py
-new file:   src/processors/gemini_vision_ocr.py          (~180 lines)
-deleted:    src/processors/claude_vision_ocr.py          (-617 lines)
+modified:   pyproject.toml                               (Phase 1: +google-genai; Phase 4: -anthropic -pdf2image -pillow -numpy)
+modified:   config/config.yaml                            (provider/model keys, prompt_file rename)
+modified:   src/cli/main.py                               (--service dispatch, conditional prefix check)
+modified:   src/utils/api_keys.py                         (+google wrappers & module shim, +google in list dict; -anthropic helpers in Phase 4)
+modified:   src/processors/notebook_text_extractor.py     (2 lines: import + class name; +1 log string)
+new file:   src/processors/gemini_vision_ocr.py           (~150–180 lines, depending on whether _store_ocr_results is kept)
+deleted:    src/processors/claude_vision_ocr.py           (-617 lines)
 renamed:    config/prompts/claude_ocr_default.txt -> config/prompts/ocr_default.txt
 ```
 
-**Net change:** approximately -440 lines, one fewer SDK dependency (`anthropic`), one likely-removable dependency (`pdf2image`), both prompt and model become file-editable from `config/config.yaml`.
+**[corrected] `tests/manual/test_enhanced_extraction.py` is NOT in this diff** — it doesn't reference the OCR engine.
+
+**Net change:** approximately **-440 to -480 lines**, **three** fewer dependencies (`anthropic`, `pdf2image`, `pillow`, plus likely `numpy` — all verified used only by the deleted engine), and both prompt and model become file-editable from `config/config.yaml`.
 
 ---
 
 ## Pre-flight checklist (run before starting on the target machine)
 
-- [ ] Confirm you have a Google AI API key (`AIza...`). Get one at https://aistudio.google.com/app/apikey if not.
+- [ ] Confirm you have a Google API key (`AIza...`). Get one at https://aistudio.google.com/app/apikey if not.
+- [ ] Decide and stick to the canonical service string **`google`** (keychain `google_api_key`, env `GOOGLE_API_KEY`) across `api_keys.py`, `cli/main.py`, and the engine.
 - [ ] Confirm `poetry run python -m src.cli.main watch` is not currently running (stop the process if so).
 - [ ] Take a database backup: `cp data/remarkable_pipeline.db data/remarkable_pipeline.db.pre-gemini-migration`
 - [ ] On a corporate network: test SSL connectivity to `generativelanguage.googleapis.com` with a quick `curl -v https://generativelanguage.googleapis.com/v1/models` before committing to Phase 4.
-- [ ] Read `rmirror-cloud/backend/app/core/ocr_service.py` end-to-end — it is the reference implementation.
+- [ ] Read the reference implementation end-to-end — **verified present** at `../rmirror-cloud/backend/app/core/ocr_service.py` (sibling of this repo, ~178 lines). Its `_call_vision_api` is the exact call shape to copy.
 
 ## Post-implementation checklist
 
