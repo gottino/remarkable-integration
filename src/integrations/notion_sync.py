@@ -7,7 +7,9 @@ creating a page for each notebook with content organized by pages in reverse ord
 """
 
 import os
+import re
 import logging
+import sqlite3
 import time
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
@@ -112,7 +114,89 @@ class NotionNotebookSync:
         self.database_id = database_id
         self.markdown_converter = MarkdownToNotionConverter()
         self.sync_tracker = None  # Will be set when db_manager is available
-    
+
+        # Append-only audit trail of every Notion object this session creates/updates/
+        # deletes, so duplicate blocks/pages can be found and cleaned up afterwards.
+        self.run_id = f"{datetime.now():%Y%m%dT%H%M%S}-{os.getpid()}"
+        self.audit_db_path = os.path.join('data', 'remarkable_pipeline.db')
+        self._ensure_audit_table()
+        logger.info(f"🧾 Notion sync audit enabled — run_id={self.run_id} "
+                    f"(table notion_sync_audit in {self.audit_db_path})")
+
+    def _ensure_audit_table(self) -> None:
+        """Create the append-only notion_sync_audit table if it doesn't exist."""
+        try:
+            con = sqlite3.connect(self.audit_db_path)
+            con.execute('''
+                CREATE TABLE IF NOT EXISTS notion_sync_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT,
+                    operation TEXT NOT NULL,
+                    notebook_uuid TEXT,
+                    notebook_name TEXT,
+                    page_number INTEGER,
+                    notion_page_id TEXT,
+                    notion_block_id TEXT,
+                    possible_duplicate INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            con.execute('CREATE INDEX IF NOT EXISTS idx_notion_audit_run ON notion_sync_audit(run_id)')
+            con.execute('CREATE INDEX IF NOT EXISTS idx_notion_audit_nb ON notion_sync_audit(notebook_uuid)')
+            con.commit()
+            con.close()
+        except Exception as e:
+            logger.warning(f"⚠️ Could not ensure notion_sync_audit table: {e}")
+
+    def _audit(self, operation: str, notebook_uuid: str = None, notebook_name: str = None,
+               page_number: int = None, notion_page_id: str = None, notion_block_id: str = None,
+               possible_duplicate: bool = False) -> None:
+        """Record one Notion write to the audit trail. Never raises (must not break a sync)."""
+        try:
+            con = sqlite3.connect(self.audit_db_path)
+            con.execute('''
+                INSERT INTO notion_sync_audit
+                (run_id, operation, notebook_uuid, notebook_name, page_number,
+                 notion_page_id, notion_block_id, possible_duplicate)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (self.run_id, operation, notebook_uuid, notebook_name, page_number,
+                  notion_page_id, notion_block_id, 1 if possible_duplicate else 0))
+            con.commit()
+            con.close()
+        except Exception as e:
+            logger.warning(f"⚠️ notion audit write failed ({operation}): {e}")
+        # Surface in the live log too (each block_append = one block created on Notion)
+        dup = " ⚠️ POSSIBLE DUPLICATE" if possible_duplicate else ""
+        logger.info(f"🧾 audit[{self.run_id}] {operation} nb='{notebook_name}' "
+                    f"page={page_number} page_id={notion_page_id} block={notion_block_id}{dup}")
+
+    def _audit_created_page_blocks(self, page_id: str, notebook) -> None:
+        """After a fresh page create, list its children and record each toggle block's ID."""
+        try:
+            cursor = None
+            results = []
+            while True:
+                resp = self.client.blocks.children.list(
+                    block_id=page_id, start_cursor=cursor) if cursor \
+                    else self.client.blocks.children.list(block_id=page_id)
+                results.extend(resp.get("results", []))
+                if resp.get("has_more") and resp.get("next_cursor"):
+                    cursor = resp["next_cursor"]
+                else:
+                    break
+            for block in results:
+                if block.get("type") != "toggle":
+                    continue
+                rich = block.get("toggle", {}).get("rich_text", [])
+                title = rich[0].get("text", {}).get("content", "") if rich else ""
+                m = re.search(r"Page\s+(\d+)", title)
+                page_num = int(m.group(1)) if m else None
+                self._audit('block_append', notebook_uuid=getattr(notebook, 'uuid', None),
+                            notebook_name=getattr(notebook, 'name', None), page_number=page_num,
+                            notion_page_id=page_id, notion_block_id=block.get("id"))
+        except Exception as e:
+            logger.warning(f"⚠️ Could not audit created page blocks for {page_id}: {e}")
+
     def refresh_notion_metadata_for_specific_notebooks(self, db_connection, notebook_uuids: set) -> int:
         """Refresh Notion metadata properties only for specific notebooks."""
         if not notebook_uuids:
@@ -336,9 +420,13 @@ class NotionNotebookSync:
                 children=children
             )
             
-            logger.info(f"✅ Created Notion page for notebook: {notebook.name}")
-            return response["id"]
-            
+            page_id = response["id"]
+            logger.info(f"✅ Created Notion page for notebook: {notebook.name} (page_id={page_id})")
+            self._audit('page_create', notebook_uuid=getattr(notebook, 'uuid', None),
+                        notebook_name=notebook.name, notion_page_id=page_id)
+            self._audit_created_page_blocks(page_id, notebook)
+            return page_id
+
         except APIResponseError as e:
             logger.error(f"❌ Failed to create Notion page for {notebook.name}: {e}")
             raise
@@ -464,10 +552,27 @@ class NotionNotebookSync:
                 # Keep header, summary, divider blocks
                 header_blocks.append(block)
         
+        # Audit existing toggle blocks whose page number could NOT be parsed. These are
+        # never deleted below (they're not in page_blocks_map), so if one of their pages
+        # is re-synced a duplicate block is created. Record them as cleanup candidates.
+        if blocks_to_delete:
+            logger.warning(f"⚠️ {notebook.name}: {len(blocks_to_delete)} existing toggle block(s) "
+                           f"have an unrecognized title format — they will NOT be replaced and may "
+                           f"already be (or become) duplicates. Recorded in notion_sync_audit.")
+            for unmatched_id in blocks_to_delete:
+                self._audit('unmatched_existing_block', notebook_uuid=notebook.uuid,
+                            notebook_name=notebook.name, notion_page_id=page_id,
+                            notion_block_id=unmatched_id, possible_duplicate=True)
+
         # Delete blocks for changed pages
+        deleted_page_nums = set()
         for page_num in changed_pages:
             if page_num in page_blocks_map:
                 self.client.blocks.delete(block_id=page_blocks_map[page_num])
+                deleted_page_nums.add(page_num)
+                self._audit('block_delete', notebook_uuid=notebook.uuid, notebook_name=notebook.name,
+                            page_number=page_num, notion_page_id=page_id,
+                            notion_block_id=page_blocks_map[page_num])
                 logger.debug(f"🗑️ Deleted old content for page {page_num}")
         
         # Create new blocks for changed pages in reverse order (newest first)
@@ -555,6 +660,14 @@ class NotionNotebookSync:
                 block_id = result["results"][0]["id"]
                 last_inserted_block_id = block_id  # Update anchor for next page
                 self._store_page_block_mapping(notebook.uuid, page.page_number, page_id, block_id, page.text)
+                # A new block was created. If we did NOT delete a prior block for this page
+                # but the page DID already have a (recognized) block, that's a duplicate.
+                # We also flag it when unrecognized-format blocks were present for this page.
+                is_possible_dup = (page.page_number not in deleted_page_nums
+                                   and (page.page_number in page_blocks_map or len(blocks_to_delete) > 0))
+                self._audit('block_append', notebook_uuid=notebook.uuid, notebook_name=notebook.name,
+                            page_number=page.page_number, notion_page_id=page_id,
+                            notion_block_id=block_id, possible_duplicate=is_possible_dup)
                 logger.debug(f"📝 Inserted page {page.page_number} ({i}/{len(changed_pages_sorted)}) with block ID {block_id}")
             else:
                 logger.debug(f"📝 Inserted page {page.page_number} ({i}/{len(changed_pages_sorted)}) at top of page list")
@@ -688,20 +801,27 @@ class NotionNotebookSync:
             
             # Update properties
             self.client.pages.update(page_id=page_id, properties=properties)
-            
+            self._audit('page_update', notebook_uuid=getattr(notebook, 'uuid', None),
+                        notebook_name=notebook.name, notion_page_id=page_id)
+
             # Handle content updates incrementally
             if changed_pages is None:
                 # Full refresh - delete all and recreate (fallback behavior)
                 logger.info(f"🔄 Full content refresh for {notebook.name}")
                 blocks_response = self.client.blocks.children.list(block_id=page_id)
-                
+
                 # Delete existing blocks
                 for block in blocks_response["results"]:
                     self.client.blocks.delete(block_id=block["id"])
-                
+                    self._audit('block_delete', notebook_uuid=getattr(notebook, 'uuid', None),
+                                notebook_name=notebook.name, notion_page_id=page_id,
+                                notion_block_id=block["id"])
+
                 # Add new content
                 children = self._create_page_content_blocks(notebook)
                 self.client.blocks.children.append(block_id=page_id, children=children)
+                # Capture the freshly-created block IDs for the audit trail
+                self._audit_created_page_blocks(page_id, notebook)
             else:
                 # Incremental update - only update changed pages
                 logger.info(f"📝 Incremental update for {notebook.name} - {len(changed_pages)} pages changed")
