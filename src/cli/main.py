@@ -200,11 +200,6 @@ _API_KEY_SERVICES = {
         'help_url': 'https://aistudio.google.com/app/apikey',
         'prefix': 'AIza',
     },
-    'anthropic': {
-        'label': 'Anthropic (Claude)',
-        'help_url': 'https://console.anthropic.com/',
-        'prefix': 'sk-ant-',
-    },
 }
 
 

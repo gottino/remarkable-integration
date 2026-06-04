@@ -64,7 +64,7 @@ class APIKeyManager:
         4. Interactive prompt (if terminal available and enabled)
         
         Args:
-            service: Service name (e.g., 'anthropic', 'readwise', 'notion')
+            service: Service name (e.g., 'google', 'readwise', 'notion')
             env_var: Environment variable name (auto-detected if None)
             interactive_setup: Whether to prompt interactively if not found
         
@@ -104,10 +104,6 @@ class APIKeyManager:
         logger.warning(f"No {service} API key found. Use API key management to configure.")
         return None
     
-    def get_anthropic_api_key(self) -> Optional[str]:
-        """Get Anthropic API key (backward compatibility)."""
-        return self.get_api_key('anthropic', 'ANTHROPIC_API_KEY')
-
     def get_google_api_key(self) -> Optional[str]:
         """Get Google AI (Gemini) API key.
 
@@ -130,7 +126,7 @@ class APIKeyManager:
         Store API key securely for any service.
         
         Args:
-            service: Service name (e.g., 'anthropic', 'readwise', 'notion')
+            service: Service name (e.g., 'google', 'readwise', 'notion')
             api_key: The API key to store
             method: Storage method ('keychain', 'encrypted', 'auto')
             
@@ -159,10 +155,6 @@ class APIKeyManager:
             logger.error(f"Unknown storage method: {method}")
             return False
     
-    def store_anthropic_api_key(self, api_key: str, method: str = 'auto') -> bool:
-        """Store Anthropic API key securely (backward compatibility)."""
-        return self.store_api_key('anthropic', api_key, method)
-
     def store_google_api_key(self, api_key: str, method: str = 'auto') -> bool:
         """Store Google AI (Gemini) API key securely."""
         return self.store_api_key('google', api_key, method)
@@ -189,10 +181,6 @@ class APIKeyManager:
 
         return removed
 
-    def remove_anthropic_api_key(self) -> bool:
-        """Remove stored Anthropic API key from all locations (backward compatibility)."""
-        return self.remove_api_key('anthropic')
-
     def remove_google_api_key(self) -> bool:
         """Remove stored Google AI (Gemini) API key from all locations."""
         return self.remove_api_key('google')
@@ -203,7 +191,6 @@ class APIKeyManager:
         
         # Services to check
         services = {
-            'anthropic': ['ANTHROPIC_API_KEY'],
             'google': ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
             'readwise': ['READWISE_API_TOKEN', 'READWISE_API_KEY'],
             'notion': ['NOTION_API_TOKEN', 'NOTION_API_KEY']
@@ -400,9 +387,9 @@ class APIKeyManager:
             print("=" * 40)
             
             # Service-specific instructions
-            if service == 'anthropic':
-                print("To use AI-powered OCR, you need an Anthropic API key.")
-                print("Get your API key from: https://console.anthropic.com/")
+            if service == 'google':
+                print("To use AI-powered OCR, you need a Google AI (Gemini) API key.")
+                print("Get your API key from: https://aistudio.google.com/app/apikey")
             elif service == 'readwise':
                 print("To sync to Readwise, you need a Readwise access token.")
                 print("Get your access token from: https://readwise.io/access_token")
@@ -421,8 +408,8 @@ class APIKeyManager:
                 return None
             
             # Service-specific validation
-            if service == 'anthropic' and not api_key.startswith('sk-ant-'):
-                print("⚠️  Warning: Anthropic API keys usually start with 'sk-ant-'")
+            if service == 'google' and not api_key.startswith('AIza'):
+                print("⚠️  Warning: Google AI API keys usually start with 'AIza'")
                 confirm = input("Continue anyway? (y/N): ").strip().lower()
                 if confirm != 'y':
                     return None
@@ -466,11 +453,6 @@ def get_api_key_manager() -> APIKeyManager:
     return _api_key_manager
 
 
-def get_anthropic_api_key() -> Optional[str]:
-    """Convenience function to get Anthropic API key."""
-    return get_api_key_manager().get_anthropic_api_key()
-
-
 def get_google_api_key() -> Optional[str]:
     """Convenience function to get Google AI (Gemini) API key."""
     return get_api_key_manager().get_google_api_key()
@@ -496,24 +478,24 @@ if __name__ == "__main__":
         command = sys.argv[1]
         
         if command == "get":
-            api_key = manager.get_anthropic_api_key()
+            api_key = manager.get_google_api_key()
             if api_key:
                 print(f"API key found: {api_key[:12]}...")
             else:
                 print("No API key found")
-        
+
         elif command == "set":
             if len(sys.argv) > 2:
                 api_key = sys.argv[2]
-                if manager.store_anthropic_api_key(api_key):
+                if manager.store_google_api_key(api_key):
                     print("API key stored successfully")
                 else:
                     print("Failed to store API key")
             else:
                 print("Usage: python api_keys.py set <api_key>")
-        
+
         elif command == "remove":
-            if manager.remove_anthropic_api_key():
+            if manager.remove_google_api_key():
                 print("API key removed")
             else:
                 print("No API key to remove")
@@ -535,7 +517,7 @@ if __name__ == "__main__":
         keys = manager.list_stored_keys()
         print(f"Available keys: {keys}")
         
-        api_key = manager.get_anthropic_api_key()
+        api_key = manager.get_google_api_key()
         if api_key:
             print(f"API key available: {api_key[:12]}...")
         else:
