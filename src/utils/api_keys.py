@@ -107,7 +107,16 @@ class APIKeyManager:
     def get_anthropic_api_key(self) -> Optional[str]:
         """Get Anthropic API key (backward compatibility)."""
         return self.get_api_key('anthropic', 'ANTHROPIC_API_KEY')
-    
+
+    def get_google_api_key(self) -> Optional[str]:
+        """Get Google AI (Gemini) API key.
+
+        Non-interactive: returns None if not configured rather than prompting,
+        so the OCR engine can degrade gracefully inside the watcher.
+        The google-genai SDK also natively reads GOOGLE_API_KEY / GEMINI_API_KEY.
+        """
+        return self.get_api_key('google', 'GOOGLE_API_KEY', interactive_setup=False)
+
     def get_readwise_api_key(self) -> Optional[str]:
         """Get Readwise API key."""
         return self.get_api_key('readwise', 'READWISE_API_TOKEN', interactive_setup=True)
@@ -153,7 +162,11 @@ class APIKeyManager:
     def store_anthropic_api_key(self, api_key: str, method: str = 'auto') -> bool:
         """Store Anthropic API key securely (backward compatibility)."""
         return self.store_api_key('anthropic', api_key, method)
-    
+
+    def store_google_api_key(self, api_key: str, method: str = 'auto') -> bool:
+        """Store Google AI (Gemini) API key securely."""
+        return self.store_api_key('google', api_key, method)
+
     def store_readwise_api_key(self, api_key: str, method: str = 'auto') -> bool:
         """Store Readwise API key securely."""
         return self.store_api_key('readwise', api_key, method)
@@ -162,22 +175,28 @@ class APIKeyManager:
         """Store Notion API key securely.""" 
         return self.store_api_key('notion', api_key, method)
     
-    def remove_anthropic_api_key(self) -> bool:
-        """Remove stored Anthropic API key from all locations."""
+    def remove_api_key(self, service: str) -> bool:
+        """Remove a stored API key for any service from all locations."""
         removed = False
-        
-        # Remove from keychain
-        if self._remove_from_keychain('anthropic'):
-            logger.info("API key removed from keychain")
+
+        if self._remove_from_keychain(service):
+            logger.info(f"{service} API key removed from keychain")
             removed = True
-        
-        # Remove from encrypted config
-        if self._remove_from_encrypted_config('anthropic'):
-            logger.info("API key removed from encrypted configuration")
+
+        if self._remove_from_encrypted_config(service):
+            logger.info(f"{service} API key removed from encrypted configuration")
             removed = True
-        
+
         return removed
-    
+
+    def remove_anthropic_api_key(self) -> bool:
+        """Remove stored Anthropic API key from all locations (backward compatibility)."""
+        return self.remove_api_key('anthropic')
+
+    def remove_google_api_key(self) -> bool:
+        """Remove stored Google AI (Gemini) API key from all locations."""
+        return self.remove_api_key('google')
+
     def list_stored_keys(self) -> Dict[str, str]:
         """List all stored API keys and their storage locations."""
         keys = {}
@@ -185,6 +204,7 @@ class APIKeyManager:
         # Services to check
         services = {
             'anthropic': ['ANTHROPIC_API_KEY'],
+            'google': ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
             'readwise': ['READWISE_API_TOKEN', 'READWISE_API_KEY'],
             'notion': ['NOTION_API_TOKEN', 'NOTION_API_KEY']
         }
@@ -449,6 +469,11 @@ def get_api_key_manager() -> APIKeyManager:
 def get_anthropic_api_key() -> Optional[str]:
     """Convenience function to get Anthropic API key."""
     return get_api_key_manager().get_anthropic_api_key()
+
+
+def get_google_api_key() -> Optional[str]:
+    """Convenience function to get Google AI (Gemini) API key."""
+    return get_api_key_manager().get_google_api_key()
 
 
 def get_readwise_api_key() -> Optional[str]:

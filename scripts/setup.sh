@@ -6,10 +6,10 @@
 echo "📦 Adding core dependencies for highlight extraction..."
 
 # Core dependencies (if not already present)
-poetry add pandas@^1.3.0
-poetry add numpy@^1.20.0
+poetry add pandas@^2.2.0
+poetry add numpy@^1.26.0
 poetry add watchdog@^2.1.0
-poetry add pydantic@^1.8.0
+poetry add pydantic@^2.9.0
 poetry add loguru@^0.6.0
 
 echo "🧪 Adding development dependencies..."

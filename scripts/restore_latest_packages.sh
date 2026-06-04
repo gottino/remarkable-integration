@@ -52,10 +52,10 @@ case $choice in
         echo "🔧 Making version constraints more flexible..."
         
         # Create a more flexible version
-        sed -i.tmp 's/pandas = "\^1\.3\.0"/pandas = ">=1.3.0"/' pyproject.toml
-        sed -i.tmp 's/numpy = "\^1\.20\.0"/numpy = ">=1.20.0"/' pyproject.toml  
+        sed -i.tmp 's/pandas = "\^2\.2\.0"/pandas = ">=2.2.0"/' pyproject.toml
+        sed -i.tmp 's/numpy = "\^1\.26\.0"/numpy = ">=1.26.0"/' pyproject.toml
         sed -i.tmp 's/watchdog = "\^2\.1\.0"/watchdog = ">=2.0.0"/' pyproject.toml
-        sed -i.tmp 's/pydantic = "\^1\.8\.0"/pydantic = ">=1.8.0"/' pyproject.toml
+        sed -i.tmp 's/pydantic = "\^2\.9\.0"/pydantic = ">=2.9.0"/' pyproject.toml
         sed -i.tmp 's/loguru = "\^0\.6\.0"/loguru = ">=0.6.0"/' pyproject.toml
         
         # Remove temporary file
