@@ -413,7 +413,7 @@ Pick a PDF from a temp dir during a previous OCR run, or render one fresh. Expec
 
 **5.2 End-to-end via watcher**
 
-1. Pick a notebook that's already fully OCR'd (e.g. Christian).
+1. Pick a notebook that's already fully OCR'd (any already-synced notebook).
 2. In the DB, delete one page's row — **`notebook_text_extractions` is the correct table** (it has a `page_number` column, verified; `ocr_results` is the dead one and deleting from it does nothing):
    ```sql
    DELETE FROM notebook_text_extractions
