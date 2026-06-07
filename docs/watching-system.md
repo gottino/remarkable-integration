@@ -20,9 +20,9 @@ reMarkable Source Directory → [FileWatcher] → [Change Detection] → [Text E
 
 #### **Step 1: Set Up API Key** (for AI-powered OCR)
 ```bash
-poetry run python -m src.cli.main config api-key set
+poetry run python -m src.cli.main config api-key set --service google
 ```
-Follow the prompts to enter your Anthropic API key from [console.anthropic.com](https://console.anthropic.com/).
+Follow the prompts to enter your Google (Gemini) API key from [aistudio.google.com](https://aistudio.google.com/app/apikey). (Also ensure `rsvg-convert` is installed — `brew install librsvg` — or pages won't render.)
 
 #### **Step 2: Configure Your Setup**
 Create or update your `config.yaml`:
@@ -98,7 +98,7 @@ Once started, here's what happens automatically:
 2. **FileWatcher detects change** → Triggers processing after debounce
 3. **Change detection analyzes files** → Identifies only modified pages
 4. **NotebookTextExtractor processes** → Uses incremental updates (only changed pages)
-5. **AI OCR extracts text** → Claude Vision reads your handwriting
+5. **AI OCR extracts text** → Gemini Vision reads your handwriting
 6. **Database stores results** → Searchable text with metadata
 7. **Notion sync triggers automatically** → Syncs changed notebooks to Notion
 8. **Per-page tracking updates** → Individual sync records for each page

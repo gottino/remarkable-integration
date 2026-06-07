@@ -1,29 +1,44 @@
 # AI-Powered OCR Guide
 
-Transform your handwritten reMarkable notes into perfect digital text using Claude's advanced vision AI.
+Transform your handwritten reMarkable notes into perfect digital text using Google Gemini's advanced vision AI.
 
 ## 🎯 Overview
 
 This system provides **human-level handwriting recognition** by combining:
-- **Claude Vision AI**: State-of-the-art handwriting understanding
+- **Google Gemini Vision** (`gemini-2.5-flash`): State-of-the-art handwriting understanding
 - **Smart Date Detection**: Recognizes your date annotation patterns  
 - **Perfect Markdown Output**: Preserves structure and formatting
 - **Multi-language Support**: Handles mixed-language content seamlessly
 
 ## 🚀 Quick Start
 
-### 1. Setup Claude API Access
+### 1. Install the page-rendering dependency
+
+OCR runs `.rm → SVG → PDF → model`, and the SVG→PDF step requires **`rsvg-convert`** (from **librsvg**). Without it, pages fail to render and OCR produces nothing.
 
 ```bash
-# Get your API key from: https://console.anthropic.com/
-export ANTHROPIC_API_KEY="your-api-key-here"
+# macOS
+brew install librsvg
 
-# Or add to your shell profile for permanent use:
-echo 'export ANTHROPIC_API_KEY="your-key"' >> ~/.zshrc
-source ~/.zshrc
+# Debian / Ubuntu
+sudo apt-get install -y librsvg2-bin
 ```
 
-### 2. Extract Text from Notebooks
+### 2. Setup Google (Gemini) API Access
+
+Create a key at <https://aistudio.google.com/app/apikey> (keys start with `AIza`), then store it securely in the OS keychain:
+
+```bash
+poetry run python -m src.cli.main config api-key set --service google
+```
+
+Alternatively, provide it via the environment (the `google-genai` SDK reads either):
+
+```bash
+export GOOGLE_API_KEY="your-api-key-here"   # or GEMINI_API_KEY
+```
+
+### 3. Extract Text from Notebooks
 
 ```bash
 # Basic text extraction
@@ -32,7 +47,7 @@ poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --outp
 # Result: Creates "Notebook Name.md" files with perfect transcription
 ```
 
-### 3. Verify Results
+### 4. Verify Results
 
 Your output will be beautifully formatted Markdown:
 
@@ -145,17 +160,17 @@ Meeting with John
 
 ### Configurable OCR Prompts (NEW!)
 
-Customize Claude's behavior for domain-specific handwriting and notation:
+Customize the model's behavior for domain-specific handwriting and notation:
 
 **Default prompt location:**
 ```
-config/prompts/claude_ocr_default.txt
+config/prompts/ocr_default.txt
 ```
 
 **How to customize:**
 ```bash
 # Edit the OCR prompt
-nano config/prompts/claude_ocr_default.txt
+nano config/prompts/ocr_default.txt
 
 # The system will use your custom prompt automatically
 poetry run python -m src.cli.main text extract data/ --output-dir "notes"
@@ -203,7 +218,7 @@ The system automatically filters out blank or placeholder pages:
 
 **What gets filtered:**
 - Truly empty pages (no content)
-- Claude's "This appears to be a blank page" placeholders
+- "This appears to be a blank page" placeholders returned by the model
 - Pages with "completely empty page" markers
 
 **Benefits:**
@@ -212,21 +227,22 @@ The system automatically filters out blank or placeholder pages:
 - No wasted API calls
 - Better organization
 
-### Claude Vision OCR
+### Gemini Vision OCR
 
-The system uses Claude's vision capabilities exclusively for OCR:
+The system uses Google Gemini's vision capabilities exclusively for OCR:
 
-- **Superior Handwriting Recognition**: Claude Vision provides the best accuracy for handwritten notes
+- **Superior Handwriting Recognition**: Gemini Vision provides excellent accuracy for handwritten notes
 - **Context-Aware**: Understands handwriting context and formatting better than traditional OCR
-- **Configurable**: Customize prompts in `config/prompts/claude_ocr_default.txt`
+- **Native PDF input**: Single-page PDFs are sent directly to the model (no image conversion step)
+- **Configurable**: Customize prompts in `config/prompts/ocr_default.txt`; the model is set via `processing.ocr.model` in `config.yaml`
 
 ### Corporate Network Support
 
-For enterprise environments with SSL interception:
+The `google-genai` client uses standard HTTPS certificate verification. On enterprise networks that intercept SSL, Gemini calls may fail with certificate errors — point the client at your corporate CA bundle, e.g.:
 
 ```bash
-# The system automatically handles SSL certificate issues
-# No additional configuration needed - works out of the box
+export SSL_CERT_FILE=/path/to/corporate-ca-bundle.pem
+# (gRPC transport may also honor GRPC_DEFAULT_SSL_ROOTS_FILE_PATH)
 ```
 
 ### Batch Processing
@@ -306,7 +322,7 @@ Text with perfect formatting...
 - ✅ **Technical notation**
 
 ### Recognition Accuracy:
-- **Claude Vision**: ~95-98% accuracy on handwriting
+- **Gemini Vision**: ~95-98% accuracy on handwriting
 - **Date Detection**: ~99% accuracy on "lying L" patterns
 - **Symbol Recognition**: ~98% accuracy for arrows/bullets
 - **Structure Preservation**: ~100% formatting accuracy
@@ -315,32 +331,29 @@ Text with perfect formatting...
 
 ### API Key Issues
 ```bash
-# Check if API key is set
-echo $ANTHROPIC_API_KEY
+# Check whether a Google (Gemini) key is configured (shows location, not the key)
+poetry run python -m src.cli.main config api-key get --service google
 
-# Test API connection
-poetry run python -c "
-import anthropic
-client = anthropic.Anthropic()
-print('API connection successful!')
-"
+# Or check the environment
+echo $GOOGLE_API_KEY   # or $GEMINI_API_KEY
 ```
 
 ### No Text Extracted
-1. **Check input path**: Ensure you're pointing to reMarkable data directory
-2. **Verify file structure**: Look for `.rm`, `.content`, and `.metadata` files
-3. **Check API limits**: Ensure you have Claude API credits
-4. **Review confidence**: Try lowering `--confidence` parameter
+1. **Check `rsvg-convert` is installed**: if pages can't render to PDF, OCR silently yields nothing (`rsvg-convert --version`)
+2. **Check input path**: Ensure you're pointing to the reMarkable data directory
+3. **Verify file structure**: Look for `.rm`, `.content`, and `.metadata` files
+4. **Check API quota**: Ensure your Google AI (Gemini) project has quota/billing enabled
+5. **Review confidence**: Try lowering `--confidence` parameter
 
 ### SSL/Network Issues
-```bash
-# For corporate networks, the system automatically:
-# - Disables SSL verification when needed
-# - Handles proxy configurations
-# - Retries failed connections
 
-# No manual configuration required
+Gemini OCR uses standard HTTPS certificate verification (it does **not** disable SSL). On corporate networks that intercept SSL, point the client at your CA bundle:
+
+```bash
+export SSL_CERT_FILE=/path/to/corporate-ca-bundle.pem
 ```
+
+(Notion/Readwise sync can disable verification via `integrations.notion.verify_ssl: false` in `config.yaml`, but that switch does not affect Gemini OCR.)
 
 ### Performance Optimization
 ```bash

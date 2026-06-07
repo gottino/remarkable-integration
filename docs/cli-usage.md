@@ -92,7 +92,7 @@ poetry run python -m src.cli.main process-all "/path/to/data" --output-dir "note
 ```
 
 **What `process-all` does:**
-1. **Step 1**: Extracts handwritten text from notebook `.rm` files using Claude Vision OCR
+1. **Step 1**: Extracts handwritten text from notebook `.rm` files using Gemini Vision OCR
 2. **Step 2**: Extracts highlights from PDF/EPUB documents (basic or enhanced)
 3. **Step 3**: Exports both results to CSV files (optional)
 4. **Step 4**: Shows comprehensive summary of all processing
@@ -124,7 +124,7 @@ By default, all processing commands automatically update notebook metadata befor
 > See **[AI OCR Guide](ai-ocr.md)** for complete setup and optimization details.
 
 ```bash
-# Extract handwritten text using Claude Vision AI
+# Extract handwritten text using Google Gemini Vision
 poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --output-dir "extracted_notes"
 
 # Advanced options
@@ -142,7 +142,8 @@ poetry run python -m src.cli.main text extract "/path/to/data" \
 ```
 
 **Requirements:**
-- Set `ANTHROPIC_API_KEY` environment variable
+- A Google (Gemini) API key — `config api-key set --service google`, or `GOOGLE_API_KEY` / `GEMINI_API_KEY`
+- `rsvg-convert` installed (from librsvg) for page rendering
 - reMarkable data directory with `.rm`, `.content`, `.metadata` files
 
 **Features:**
@@ -195,7 +196,7 @@ poetry run python -m src.cli.main watch
 
 # What it does automatically:
 # 1. Monitors reMarkable directory for changes
-# 2. Extracts handwritten text using Claude Vision
+# 2. Extracts handwritten text using Gemini Vision
 # 3. Syncs to Notion with per-page tracking
 # 4. Syncs todos to Notion with page links
 # 5. Syncs PDF/EPUB highlights to Readwise
@@ -257,8 +258,8 @@ poetry run python -m src.cli.main <command> --help
 poetry install
 poetry run python -m src.cli.main config init --sync-dir "/Users/yourname/reMarkable"
 
-# 2. Set up Claude API key for AI OCR
-poetry run python -m src.cli.main config api-key set
+# 2. Set up Google (Gemini) API key for AI OCR
+poetry run python -m src.cli.main config api-key set --service google
 
 # 3. Verify setup
 poetry run python -m src.cli.main config check
@@ -391,19 +392,26 @@ ls -la "/path/to/remarkable/"
 
 #### AI OCR Issues
 ```bash
-# Error: Claude Vision OCR engine not available
-# Solution: Set your Anthropic API key
-export ANTHROPIC_API_KEY="your-api-key-here"
+# Error: Gemini Vision OCR engine not available
+# Solution: Set your Google (Gemini) API key
+poetry run python -m src.cli.main config api-key set --service google
+# (or: export GOOGLE_API_KEY="your-api-key-here")
 
-# Error: SSL certificate verification failed  
-# Solution: The system automatically handles SSL issues in corporate environments
+# Error: pages produce no text / "Failed to create PDF"
+# Solution: install the renderer — rsvg-convert (from librsvg)
+#   macOS: brew install librsvg   |   Debian/Ubuntu: apt-get install librsvg2-bin
+
+# Error: SSL certificate verification failed
+# Solution: on SSL-intercepting networks, point at your CA bundle:
+#   export SSL_CERT_FILE=/path/to/corporate-ca-bundle.pem
 
 # Error: No text extracted
 # Solutions:
-# 1. Check input path contains .rm files
-# 2. Lower confidence threshold: --confidence 0.6
-# 3. Verify API key has credits
-# 4. Check network connectivity
+# 1. Check rsvg-convert is installed (rsvg-convert --version)
+# 2. Check input path contains .rm files
+# 3. Lower confidence threshold: --confidence 0.6
+# 4. Verify your Google AI (Gemini) project has quota/billing
+# 5. Check network connectivity
 ```
 
 ## 🎯 Quick Examples
@@ -411,8 +419,9 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 ### Complete Workflow (UNIFIED APPROACH)
 ```bash
 # 1. Setup
-export ANTHROPIC_API_KEY="your-key"
+brew install librsvg                                              # page renderer (or apt-get install librsvg2-bin)
 poetry install
+poetry run python -m src.cli.main config api-key set --service google   # Gemini API key
 
 # 2. Process everything at once - handwritten notes + highlights
 poetry run python -m src.cli.main process-all "/remarkable/data" \
@@ -544,7 +553,7 @@ for row in cursor.fetchall():
 | `config init` | Initialize configuration file | Config |
 | `config check` | Validate configuration | Config |
 | `config show` | Display configuration | Config |
-| `config api-key set` | Set up API keys (Claude/Notion/Readwise) | Config |
+| `config api-key set` | Set up API keys (Google/Notion/Readwise) | Config |
 | `update-paths` | Update notebook metadata and extract EPUB info | Metadata |
 | `database stats` | Show database statistics | Database |
 | `database backup` | Create database backup | Database |

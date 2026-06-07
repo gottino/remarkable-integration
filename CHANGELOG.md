@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - OCR engine: Claude Vision → Google Gemini 2.5 Flash (2026-06-07)
+- **Replaced** the Anthropic Claude Vision OCR engine with Google Gemini (`gemini-2.5-flash`). Single-page PDFs are sent natively to the model — no more PDF→image conversion and no client-side rate limiter.
+- **API keys**: handwriting OCR now uses a Google (Gemini) key (`config api-key set --service google`, or `GOOGLE_API_KEY` / `GEMINI_API_KEY`); Anthropic key management removed.
+- **Config**: `processing.ocr` now exposes `provider` / `model` / `prompt_file`; prompt file renamed `config/prompts/claude_ocr_default.txt` → `config/prompts/ocr_default.txt`.
+- **Dependencies**: added `google-genai`; removed `anthropic` and `pdf2image` (and `pillow` as a direct dependency); bumped `pydantic` → ^2.9, `pandas` → ^2.2, `numpy` → ^1.26 for Python 3.12 support.
+- **New**: `notion_sync_audit` table — an append-only trail of Notion pages/blocks created/updated/deleted, to detect and clean up duplicates.
+- **Requirement**: `rsvg-convert` (from librsvg) must be installed for page rendering (`brew install librsvg` / `apt-get install librsvg2-bin`).
+- **Docs**: refreshed README, AI OCR guide, CLI reference, user guide, and watching-system docs for the Gemini engine.
+
 ### Improved - Highlight Quality Filtering (2025-11-02)
 - **Stricter gibberish detection**: Increased quality thresholds to prevent meaningless text extraction
   - Minimum text length: 8 → 15 characters
