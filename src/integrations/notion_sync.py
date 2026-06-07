@@ -8,6 +8,7 @@ creating a page for each notebook with content organized by pages in reverse ord
 
 import os
 import re
+import contextlib
 import logging
 import sqlite3
 import time
@@ -89,14 +90,18 @@ class Notebook:
 class NotionNotebookSync:
     """Syncs reMarkable notebook text to Notion database."""
     
-    def __init__(self, notion_token: str, database_id: str, verify_ssl: bool = True):
+    def __init__(self, notion_token: str, database_id: str, verify_ssl: bool = True,
+                 db_manager=None):
         """
         Initialize Notion sync client.
-        
+
         Args:
             notion_token: Notion integration token
             database_id: Notion database ID where notebooks will be created
             verify_ssl: Whether to verify SSL certificates (default: True)
+            db_manager: Shared DatabaseManager for the main DB. Used for the audit
+                trail so it always lands in the configured database (not a hardcoded
+                path). If omitted, falls back to the configured database.path.
         """
         if not NOTION_AVAILABLE:
             raise ImportError("notion-client package not installed. Run: pip install notion-client")
@@ -117,34 +122,61 @@ class NotionNotebookSync:
 
         # Append-only audit trail of every Notion object this session creates/updates/
         # deletes, so duplicate blocks/pages can be found and cleaned up afterwards.
+        # Writes go to the MAIN db via the shared DatabaseManager when available,
+        # otherwise the configured database.path — never a hardcoded literal.
+        self.db_manager = db_manager
         self.run_id = f"{datetime.now():%Y%m%dT%H%M%S}-{os.getpid()}"
-        self.audit_db_path = os.path.join('data', 'remarkable_pipeline.db')
+        if db_manager is not None:
+            self.audit_db_path = str(db_manager.db_path)
+        else:
+            try:
+                from ..utils.config import Config
+                self.audit_db_path = Config().get('database.path', './data/remarkable_pipeline.db')
+            except Exception:
+                self.audit_db_path = './data/remarkable_pipeline.db'
         self._ensure_audit_table()
         logger.info(f"🧾 Notion sync audit enabled — run_id={self.run_id} "
                     f"(table notion_sync_audit in {self.audit_db_path})")
 
+    @contextlib.contextmanager
+    def _audit_conn(self):
+        """Yield a connection to the MAIN db for audit writes and commit on success.
+
+        Prefers the shared DatabaseManager (thread-safe, resolves the configured
+        absolute path); falls back to the resolved configured path otherwise.
+        """
+        if self.db_manager is not None:
+            with self.db_manager.get_connection_context() as conn:
+                yield conn
+                conn.commit()
+        else:
+            conn = sqlite3.connect(self.audit_db_path)
+            try:
+                yield conn
+                conn.commit()
+            finally:
+                conn.close()
+
     def _ensure_audit_table(self) -> None:
         """Create the append-only notion_sync_audit table if it doesn't exist."""
         try:
-            con = sqlite3.connect(self.audit_db_path)
-            con.execute('''
-                CREATE TABLE IF NOT EXISTS notion_sync_audit (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT,
-                    operation TEXT NOT NULL,
-                    notebook_uuid TEXT,
-                    notebook_name TEXT,
-                    page_number INTEGER,
-                    notion_page_id TEXT,
-                    notion_block_id TEXT,
-                    possible_duplicate INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            con.execute('CREATE INDEX IF NOT EXISTS idx_notion_audit_run ON notion_sync_audit(run_id)')
-            con.execute('CREATE INDEX IF NOT EXISTS idx_notion_audit_nb ON notion_sync_audit(notebook_uuid)')
-            con.commit()
-            con.close()
+            with self._audit_conn() as con:
+                con.execute('''
+                    CREATE TABLE IF NOT EXISTS notion_sync_audit (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id TEXT,
+                        operation TEXT NOT NULL,
+                        notebook_uuid TEXT,
+                        notebook_name TEXT,
+                        page_number INTEGER,
+                        notion_page_id TEXT,
+                        notion_block_id TEXT,
+                        possible_duplicate INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                con.execute('CREATE INDEX IF NOT EXISTS idx_notion_audit_run ON notion_sync_audit(run_id)')
+                con.execute('CREATE INDEX IF NOT EXISTS idx_notion_audit_nb ON notion_sync_audit(notebook_uuid)')
         except Exception as e:
             logger.warning(f"⚠️ Could not ensure notion_sync_audit table: {e}")
 
@@ -153,16 +185,14 @@ class NotionNotebookSync:
                possible_duplicate: bool = False) -> None:
         """Record one Notion write to the audit trail. Never raises (must not break a sync)."""
         try:
-            con = sqlite3.connect(self.audit_db_path)
-            con.execute('''
-                INSERT INTO notion_sync_audit
-                (run_id, operation, notebook_uuid, notebook_name, page_number,
-                 notion_page_id, notion_block_id, possible_duplicate)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (self.run_id, operation, notebook_uuid, notebook_name, page_number,
-                  notion_page_id, notion_block_id, 1 if possible_duplicate else 0))
-            con.commit()
-            con.close()
+            with self._audit_conn() as con:
+                con.execute('''
+                    INSERT INTO notion_sync_audit
+                    (run_id, operation, notebook_uuid, notebook_name, page_number,
+                     notion_page_id, notion_block_id, possible_duplicate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (self.run_id, operation, notebook_uuid, notebook_name, page_number,
+                      notion_page_id, notion_block_id, 1 if possible_duplicate else 0))
         except Exception as e:
             logger.warning(f"⚠️ notion audit write failed ({operation}): {e}")
         # Surface in the live log too (each block_append = one block created on Notion)

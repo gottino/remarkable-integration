@@ -48,7 +48,8 @@ class NotionSyncTarget(SyncTarget):
         self.notion_client = NotionNotebookSync(
             notion_token=notion_token,
             database_id=database_id,
-            verify_ssl=verify_ssl
+            verify_ssl=verify_ssl,
+            db_manager=db_manager
         )
         
         # Store SSL setting for any additional API calls
