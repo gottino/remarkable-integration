@@ -68,7 +68,13 @@ processing:
     enabled: false
     language: "en"
     confidence_threshold: 0.7
-  
+    # Gemini Vision OCR configuration
+    provider: gemini
+    model: gemini-2.5-flash
+    # Path to custom prompt file (relative to project root or absolute path).
+    # If unset or missing, a built-in default prompt is used.
+    prompt_file: config/prompts/ocr_default.txt
+
   # File watching settings (two-tier system)
   file_watching:
     enabled: true

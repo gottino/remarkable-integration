@@ -24,7 +24,7 @@ from pathlib import Path
 import time
 
 # Import our existing components
-from .claude_vision_ocr import ClaudeVisionOCREngine, OCRResult
+from .gemini_vision_ocr import GeminiVisionOCREngine, OCRResult
 from ..core.rm_parser import RemarkableParser
 
 
@@ -364,9 +364,9 @@ class NotebookTextExtractor:
         self.max_pages = None  # Maximum pages to process per notebook (for testing)
         self.notebook_filter_list = None  # List of notebook UUIDs/names to process selectively
         
-        # OCR Engine: Claude Vision (best for handwriting)
-        logger.info("Initializing Claude Vision OCR...")
-        self.ocr_engine = ClaudeVisionOCREngine(
+        # OCR Engine: Gemini Vision (best for handwriting)
+        logger.info("Initializing Gemini Vision OCR...")
+        self.ocr_engine = GeminiVisionOCREngine(
             db_connection=db_connection,
             confidence_threshold=confidence_threshold
         )

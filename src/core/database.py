@@ -192,6 +192,23 @@ class DatabaseManager:
             )
         ''')
         
+        # Notion sync audit table - append-only trail of every Notion object
+        # created/updated/deleted, so duplicates can be cleaned up after the fact.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notion_sync_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT,                       -- one watch/sync session
+                operation TEXT NOT NULL,           -- page_create | page_update | block_append | block_delete | unmatched_existing_block
+                notebook_uuid TEXT,
+                notebook_name TEXT,
+                page_number INTEGER,
+                notion_page_id TEXT,
+                notion_block_id TEXT,
+                possible_duplicate INTEGER DEFAULT 0,  -- 1 if an append had no matching prior delete while unmatched blocks existed
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # Events table - for event system
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS events (

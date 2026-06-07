@@ -193,39 +193,53 @@ def api_key():
     pass
 
 
+# Per-service metadata for the api-key commands.
+_API_KEY_SERVICES = {
+    'google': {
+        'label': 'Google AI (Gemini)',
+        'help_url': 'https://aistudio.google.com/app/apikey',
+        'prefix': 'AIza',
+    },
+}
+
+
 @api_key.command('set')
-@click.option('--method', type=click.Choice(['auto', 'keychain', 'encrypted']), 
+@click.option('--service', type=click.Choice(list(_API_KEY_SERVICES)),
+              default='google', help='Which provider key to set (default: google)')
+@click.option('--method', type=click.Choice(['auto', 'keychain', 'encrypted']),
               default='auto', help='Storage method (default: auto)')
 @click.option('--key', help='API key (will prompt securely if not provided)')
-def api_key_set(method: str, key: Optional[str]):
-    """Set Anthropic API key for AI-powered OCR."""
-    
+def api_key_set(service: str, method: str, key: Optional[str]):
+    """Set the API key for AI-powered OCR (default service: google)."""
+
     api_manager = get_api_key_manager()
-    
+    meta = _API_KEY_SERVICES[service]
+
     if not key:
         import getpass
-        click.echo("🔑 Setting up Anthropic API key for AI-powered OCR")
-        click.echo("Get your API key from: https://console.anthropic.com/")
+        click.echo(f"🔑 Setting up {meta['label']} API key for AI-powered OCR")
+        click.echo(f"Get your API key from: {meta['help_url']}")
         click.echo()
-        
+
         try:
             key = getpass.getpass("Enter your API key (input hidden): ").strip()
         except KeyboardInterrupt:
             click.echo("\nCancelled.")
             sys.exit(0)
-        
+
         if not key:
             click.echo("No API key provided.", err=True)
             sys.exit(1)
-    
-    # Basic validation
-    if not key.startswith('sk-ant-'):
-        click.echo("⚠️  Warning: Anthropic API keys usually start with 'sk-ant-'")
+
+    # Basic validation (per-service prefix)
+    prefix = meta.get('prefix')
+    if prefix and not key.startswith(prefix):
+        click.echo(f"⚠️  Warning: {meta['label']} API keys usually start with '{prefix}'")
         if not click.confirm("Continue anyway?"):
             sys.exit(0)
-    
+
     # Store the key
-    if api_manager.store_anthropic_api_key(key, method):
+    if api_manager.store_api_key(service, key, method):
         click.echo(f"✅ API key stored successfully using {method} method")
         click.echo("You can now use AI-powered OCR commands!")
     else:
@@ -234,33 +248,37 @@ def api_key_set(method: str, key: Optional[str]):
 
 
 @api_key.command('get')
-def api_key_get():
-    """Check if Anthropic API key is available."""
-    
+@click.option('--service', type=click.Choice(list(_API_KEY_SERVICES)),
+              default='google', help='Which provider key to check (default: google)')
+def api_key_get(service: str):
+    """Check if an API key is available (default service: google)."""
+
     api_manager = get_api_key_manager()
-    api_key = api_manager.get_anthropic_api_key()
-    
+    api_key = api_manager.get_api_key(service, interactive_setup=False)
+
     if api_key:
         click.echo(f"✅ API key found: {api_key[:12]}...")
-        
+
         # Show storage location
         keys = api_manager.list_stored_keys()
-        if 'anthropic' in keys:
-            location = keys['anthropic']
+        if service in keys:
+            location = keys[service]
             click.echo(f"📍 Storage location: {location}")
     else:
         click.echo("❌ No API key found")
-        click.echo("Use 'config api-key set' to configure your API key")
+        click.echo(f"Use 'config api-key set --service {service}' to configure your API key")
 
 
 @api_key.command('remove')
+@click.option('--service', type=click.Choice(list(_API_KEY_SERVICES)),
+              default='google', help='Which provider key to remove (default: google)')
 @click.confirmation_option(prompt='Are you sure you want to remove the stored API key?')
-def api_key_remove():
-    """Remove stored Anthropic API key."""
-    
+def api_key_remove(service: str):
+    """Remove a stored API key (default service: google)."""
+
     api_manager = get_api_key_manager()
-    
-    if api_manager.remove_anthropic_api_key():
+
+    if api_manager.remove_api_key(service):
         click.echo("✅ API key removed successfully")
     else:
         click.echo("ℹ️  No API key was stored")
