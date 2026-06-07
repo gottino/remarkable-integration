@@ -5,8 +5,8 @@ Transform your handwritten reMarkable notes into searchable digital text with AI
 ## ✨ Revolutionary Features
 
 ### Core OCR & Processing
-- **🤖 AI-Powered Handwriting OCR**: Claude Vision technology reads cursive writing with human-level accuracy
-- **🎨 Configurable OCR Prompts**: Customize Claude's behavior for domain-specific handwriting
+- **🤖 AI-Powered Handwriting OCR**: Google Gemini Vision reads cursive writing with human-level accuracy
+- **🎨 Configurable OCR Prompts**: Customize the model's behavior for domain-specific handwriting
 - **📅 Smart Date Recognition**: Automatically detects your date annotations and organizes content chronologically
 - **📝 Perfect Markdown Output**: Preserves formatting, arrows (→), bullets (•), and structure
 - **🔄 Complete Automation**: .rm files → SVG → PDF → AI transcription → searchable text
@@ -22,14 +22,47 @@ Transform your handwritten reMarkable notes into searchable digital text with AI
 - **🔄 Unified Sync Architecture**: Event-driven change tracking across all integrations
 - **⚡ Real-Time Watching**: File watcher with auto-sync to Notion and intelligent change detection
 
+## Prerequisites
+
+Before running on a new machine, make sure these are in place:
+
+| Requirement | Notes |
+|---|---|
+| **Python 3.12** | 3.11–3.13 work; 3.14 is not yet supported (some dependencies have no wheels for it). |
+| **[Poetry](https://python-poetry.org/)** | Manages the virtualenv and dependencies (`poetry install`). |
+| **`rsvg-convert`** (from **librsvg**) | **Required.** Pages render `.rm → SVG → PDF → OCR`, and the SVG→PDF step shells out to `rsvg-convert`. **If it's missing, OCR silently produces nothing** (pages fail to render before reaching the model). |
+| **Google (Gemini) API key** | Used for handwriting OCR. Create one at <https://aistudio.google.com/app/apikey> (keys start with `AIza`). |
+
+Install the system dependency:
+
+```bash
+# macOS
+brew install librsvg
+
+# Debian / Ubuntu
+sudo apt-get install -y librsvg2-bin
+```
+
+Provide the Gemini API key (stored in the OS keychain), or set `GOOGLE_API_KEY` / `GEMINI_API_KEY` in the environment:
+
+```bash
+poetry run python -m src.cli.main config api-key set --service google
+```
+
+> **Using Notion or Readwise sync?** You'll also need those API tokens — see the
+> [Notion integration guide](docs/notion-integration.md). Note: the **Notion token
+> must be reachable via the OS keychain or the `NOTION_API_TOKEN` environment
+> variable** for the live watcher's sync to pick it up — a token placed only in
+> `config.yaml` is not used by the unified sync path.
+
 ## Quick Start
 
 ```bash
 # Install dependencies  
 poetry install
 
-# Set up your Claude API key securely
-poetry run python -m src.cli.main config api-key set
+# Set up your Google (Gemini) API key securely
+poetry run python -m src.cli.main config api-key set --service google
 
 # 🆕 UNIFIED: Process everything at once - handwritten notes + PDF/EPUB highlights
 # Automatically updates metadata for fresh folder structure and timestamps
@@ -73,10 +106,10 @@ poetry run python -m src.cli.main text extract "/path/to/remarkable/data" --outp
 ## 🚀 Advanced Features
 
 ### Text Extraction & OCR
-- **Claude Vision OCR**: Superior handwriting recognition using Claude's vision capabilities
+- **Gemini Vision OCR**: Superior handwriting recognition using Google Gemini 2.5 Flash
 - **Date Annotation Recognition**: Automatically detects your "lying L" date patterns in note corners
-- **Configurable Prompts**: Custom OCR prompts in `config/prompts/claude_ocr_default.txt`
-- **Blank Page Filtering**: Automatically skips Claude's blank placeholders
+- **Configurable Prompts**: Custom OCR prompts in `config/prompts/ocr_default.txt`
+- **Blank Page Filtering**: Automatically skips blank placeholder pages
 - **Secure API Key Management**: Encrypted storage with keychain integration
 - **Batch Processing**: Handle entire notebook collections automatically
 

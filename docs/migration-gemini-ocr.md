@@ -1,6 +1,6 @@
 # Migration Plan: Replace Claude Vision OCR with Google Gemini 2.5 Flash
 
-**Status:** Planned — not yet executed
+**Status:** ✅ Completed — merged to `main` via PR #1 (2026-06-07). Retained as an implementation record.
 **Author:** drafted 2026-05-27; reworked & verified against codebase 2026-06-04
 **Estimated effort:** half a day end-to-end including validation
 **Target machine:** any dev machine with the repo checked out

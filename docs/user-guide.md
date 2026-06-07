@@ -43,8 +43,9 @@ Project Meeting
 ### 1. Prerequisites
 
 - **reMarkable tablet** with sync enabled
-- **Python 3.11+** and Poetry
-- **Claude API key** from [Anthropic Console](https://console.anthropic.com/)
+- **Python 3.12** (3.11–3.13) and Poetry
+- **`rsvg-convert`** (from librsvg) for page rendering — `brew install librsvg` (macOS) / `apt-get install librsvg2-bin` (Debian/Ubuntu)
+- **Google (Gemini) API key** from [Google AI Studio](https://aistudio.google.com/app/apikey)
 
 ### 2. Installation
 
@@ -310,7 +311,7 @@ Each extracted todo includes:
 - Technical notation and numbers
 - Proper names and places
 
-**No configuration needed** - Claude Vision understands context across languages.
+**No configuration needed** - Gemini Vision understands context across languages.
 
 ## 📊 Output Formats
 
@@ -357,12 +358,12 @@ Useful for analysis, reporting, or database import:
 
 ### Configurable OCR Prompts (NEW!)
 
-Customize Claude's behavior for domain-specific handwriting:
+Customize the model's behavior for domain-specific handwriting:
 
 **Create a custom prompt:**
 ```bash
 # Edit the default OCR prompt
-nano config/prompts/claude_ocr_default.txt
+nano config/prompts/ocr_default.txt
 ```
 
 **Example custom prompt:**
@@ -444,7 +445,7 @@ poetry run python -m src.cli.main watch
 
 # What happens automatically:
 # 1. Detects changes in your reMarkable notebooks
-# 2. Extracts handwritten text using Claude Vision
+# 2. Extracts handwritten text using Gemini Vision
 # 3. Syncs to Notion with per-page tracking
 # 4. Updates only changed pages (intelligent sync)
 # 5. Syncs extracted todos with page links
@@ -552,11 +553,8 @@ with open('api_data/Meeting Notes.json') as f:
 - **Large notebook** (100+ pages): 10-20 minutes
 - **Complete archive** (1000+ pages): 1-3 hours
 
-### Cost Optimization
-Claude API costs approximately:
-- **$0.003** per page (average)
-- **$3** per 1000 pages
-- **$30** for complete reMarkable archive (10,000 pages)
+### Cost
+Google Gemini 2.5 Flash is very low cost for this workload — roughly an order of magnitude cheaper than the previous Claude engine, typically well under **$0.001 per page** at normal page sizes. (Check current [Gemini API pricing](https://ai.google.dev/pricing) for exact rates.)
 
 ### Quality vs Speed
 - **Fast**: `--confidence 0.6` - Good for drafts
@@ -574,8 +572,8 @@ Claude API costs approximately:
 
 **"API connection failed"**
 - Verify internet connection
-- Check API key validity at [Anthropic Console](https://console.anthropic.com/)
-- For corporate networks: System handles SSL automatically
+- Check your key in [Google AI Studio](https://aistudio.google.com/app/apikey)
+- For SSL-intercepting corporate networks: point at your CA bundle (`export SSL_CERT_FILE=/path/to/ca-bundle.pem`)
 
 **"Poor quality results"**
 - Increase confidence: `--confidence 0.9`
@@ -591,7 +589,7 @@ Claude API costs approximately:
 
 1. **Check logs**: Enable verbose mode with `-v` flag
 2. **Review configuration**: `poetry run python -m src.cli.main config check`
-3. **Test API**: `echo $ANTHROPIC_API_KEY` to verify key is set
+3. **Test API**: `poetry run python -m src.cli.main config api-key get --service google` to verify the key is configured
 4. **Sample test**: Try with single page first
 
 ## 🎉 Success Tips
