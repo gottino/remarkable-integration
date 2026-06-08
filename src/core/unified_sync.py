@@ -707,12 +707,16 @@ class UnifiedSyncManager:
                     SELECT t.id, t.notebook_uuid, t.text, t.page_number, t.updated_at,
                            sr.content_hash as last_synced_hash,
                            nm.visible_name as notebook_name,
-                           nns.notion_page_id,
+                           npb.notion_page_id,
                            npb.notion_block_id,
                            t.actual_date, t.confidence, t.created_at
                     FROM todos t
                     LEFT JOIN notebook_metadata nm ON t.notebook_uuid = nm.notebook_uuid
-                    LEFT JOIN notion_notebook_sync nns ON t.notebook_uuid = nns.notebook_uuid
+                    -- Source BOTH notion_page_id and notion_block_id from the same
+                    -- per-page row (notion_page_blocks), so todo→block linking works
+                    -- for every notebook with synced pages. (Previously page_id came
+                    -- from notion_notebook_sync, which is only populated for some
+                    -- notebooks, so links silently dropped for the rest.)
                     LEFT JOIN notion_page_blocks npb ON t.notebook_uuid = npb.notebook_uuid
                         AND t.page_number = npb.page_number
                     LEFT JOIN sync_records sr ON (
