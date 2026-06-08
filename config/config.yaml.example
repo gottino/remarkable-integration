@@ -74,6 +74,13 @@ processing:
     # Path to custom prompt file (relative to project root or absolute path).
     # If unset or missing, a built-in default prompt is used.
     prompt_file: config/prompts/ocr_default.txt
+    # Per-OCR-call timeout (seconds). A page whose Gemini call exceeds this is
+    # skipped (logged), so one slow/hung call can't block a whole notebook.
+    request_timeout_seconds: 120
+    # Watcher per-notebook processing budget = base + per_page * declared_pages.
+    # Sized so first-time OCR of a multi-page notebook isn't abandoned mid-way.
+    notebook_timeout_base_seconds: 120
+    notebook_timeout_per_page_seconds: 150
 
   # File watching settings (two-tier system)
   file_watching:

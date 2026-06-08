@@ -9,6 +9,7 @@ This approach provides real-time responsiveness while maintaining processing rel
 """
 
 import os
+import json
 import asyncio
 import logging
 import hashlib
@@ -1229,6 +1230,23 @@ class ReMarkableWatcher:
         except Exception:
             return None
 
+    def _count_declared_pages(self, notebook_uuid: str) -> int:
+        """Best-effort count of a notebook's declared pages from its .content file.
+
+        Used only to size the processing timeout; returns 0 if it can't be read.
+        """
+        try:
+            source_dir = self.config.get('remarkable.source_directory', '')
+            content_path = os.path.join(source_dir, f"{notebook_uuid}.content")
+            with open(content_path, 'r', encoding='utf-8') as f:
+                content = json.load(f)
+            if content.get('formatVersion') == 2:
+                pages = content.get('cPages', {}).get('pages', [])
+                return len([p for p in pages if 'deleted' not in p])
+            return len(content.get('pages', []) or [])
+        except Exception:
+            return 0
+
     async def _process_notebook_async(self, notebook_uuid: str):
         """Process notebook asynchronously (wrapper for sync text extractor)."""
         # Check for recent processing to avoid duplicates
@@ -1257,8 +1275,16 @@ class ReMarkableWatcher:
         logger.info(f"🔍 Marking {notebook_uuid} as processing at {current_time}")
         self._processing_locks[notebook_uuid] = current_time
 
-        # Run the synchronous text extraction in a thread pool with timeout
+        # Run the synchronous text extraction in a thread pool with a timeout sized
+        # to the notebook. A flat 60s could not cover first-time OCR of a multi-page
+        # notebook (every page processed from scratch), so the whole notebook would be
+        # abandoned. Scale the budget by declared page count; each individual OCR call
+        # is separately bounded by the engine's per-request timeout.
         loop = asyncio.get_event_loop()
+        num_pages = max(self._count_declared_pages(notebook_uuid), 1)
+        base_s = self.config.get('processing.ocr.notebook_timeout_base_seconds', 120)
+        per_page_s = self.config.get('processing.ocr.notebook_timeout_per_page_seconds', 150)
+        notebook_timeout = base_s + per_page_s * num_pages
         try:
             result = await asyncio.wait_for(
                 loop.run_in_executor(
@@ -1266,18 +1292,19 @@ class ReMarkableWatcher:
                     self._process_notebook_sync,
                     notebook_uuid
                 ),
-                timeout=60.0  # 60 second timeout for processing
+                timeout=notebook_timeout
             )
         except asyncio.TimeoutError:
-            logger.error(f"⏰ Processing timeout for {notebook_uuid} - skipping")
+            logger.error(f"⏰ Processing timeout ({notebook_timeout:.0f}s for ~{num_pages} pages) "
+                         f"for {notebook_uuid} - skipping")
             return NotebookProcessingResult(
                 success=False,
-                error_message=f"Processing timeout after 60 seconds",
+                error_message=f"Processing timeout after {notebook_timeout:.0f} seconds",
                 notebook_name="Unknown",
                 notebook_uuid=notebook_uuid,
                 processed_page_numbers=[],
                 todos=[],
-                processing_time_ms=60000
+                processing_time_ms=int(notebook_timeout * 1000)
             )
 
         # Handle case where text_extractor is not available

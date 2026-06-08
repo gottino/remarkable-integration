@@ -143,6 +143,10 @@ class GeminiVisionOCREngine:
         self.confidence_threshold = confidence_threshold
         self.config = config or Config()
         self.model = model or self.config.get('processing.ocr.model', 'gemini-2.5-flash')
+        # Per-request timeout (seconds) so a single slow/hung OCR call can't block a
+        # whole notebook indefinitely. A page that exceeds it raises, is caught below,
+        # and is skipped — the rest of the notebook continues.
+        self.request_timeout_s = self.config.get('processing.ocr.request_timeout_seconds', 120)
 
         # Initialize Gemini client
         self.client = None
@@ -150,8 +154,14 @@ class GeminiVisionOCREngine:
             try:
                 api_key = api_key or get_google_api_key()
                 if api_key:
-                    self.client = genai.Client(api_key=api_key)
-                    logger.info(f"Gemini Vision OCR initialized with model: {self.model}")
+                    self.client = genai.Client(
+                        api_key=api_key,
+                        http_options=types.HttpOptions(timeout=int(self.request_timeout_s * 1000)),
+                    )
+                    logger.info(
+                        f"Gemini Vision OCR initialized with model: {self.model} "
+                        f"(request timeout: {self.request_timeout_s}s)"
+                    )
                 else:
                     logger.error(
                         "No Google API key found. Use "
